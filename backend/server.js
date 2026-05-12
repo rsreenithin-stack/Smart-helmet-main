@@ -327,6 +327,9 @@ async function evaluateAlertPolicy(reading) {
 
   // ── NORMAL ──────────────────────────────────────────────────────────────
   if (reading.overallStatus === 'normal') {
+    // Reset buzzer command on device when returning to normal
+    if (statusChanged) await triggerDeviceBuzzer('off');
+
     // Hourly status report
     if (now - appState.lastNormalEmailAt >= EMAIL_INTERVAL) {
       try {
@@ -346,7 +349,8 @@ async function evaluateAlertPolicy(reading) {
 
   // ── WARNING ──────────────────────────────────────────────────────────────
   if (reading.overallStatus === 'warning') {
-    // Fire immediately on first detection (statusChanged) OR after cooldown
+    if (statusChanged) await triggerDeviceBuzzer('on');
+
     const shouldSend = statusChanged || (now - appState.lastWarningEmailAt >= ALERT_COOLDOWN);
     if (shouldSend) {
       try {
@@ -365,6 +369,8 @@ async function evaluateAlertPolicy(reading) {
   }
 
   // ── DANGER ───────────────────────────────────────────────────────────────
+  if (statusChanged) await triggerDeviceBuzzer('on');
+
   const shouldSend = statusChanged || (now - appState.lastDangerEmailAt >= ALERT_COOLDOWN);
   if (shouldSend) {
     try {
@@ -566,6 +572,40 @@ app.post('/api/alerts/test', handleTestAlert);
 
 app.post('/api/alert/test', handleTestAlert);
 
+// Send buzzer command directly to ESP8266 HTTP server on local network
+async function triggerDeviceBuzzer(command = 'on') {
+  const deviceIp = process.env.HELMET_DEVICE_IP;
+  if (!deviceIp) {
+    console.warn('⚠️  HELMET_DEVICE_IP not set in .env — cannot trigger physical buzzer');
+    return false;
+  }
+  try {
+    const url = `http://${deviceIp}/buzzer/${command}`;
+    const response = await axios.get(url, { timeout: 3000 });
+    console.log(`📡 Buzzer ${command.toUpperCase()} sent to device at ${deviceIp}:`, response.data);
+    return true;
+  } catch (error) {
+    console.error(`❌ Device buzzer command failed (${deviceIp}):`, error.message);
+    return false;
+  }
+}
+
+// Write a command value to ThingSpeak field4 so ESP8266 picks it up
+async function writeThingSpeakCommand(field4Value) {
+  if (!THINGSPEAK_WRITE_KEY) return;
+  try {
+    const url = `https://api.thingspeak.com/update?api_key=${THINGSPEAK_WRITE_KEY}&field4=${field4Value}`;
+    const response = await axios.get(url, { timeout: 8000 });
+    if (response.data === 0) {
+      console.warn('⚠️  ThingSpeak write returned 0 — rate limited (15s minimum between updates)');
+    } else {
+      console.log(`📡 ThingSpeak field4=${field4Value} written (entry ${response.data})`);
+    }
+  } catch (error) {
+    console.error('❌ ThingSpeak write failed:', error.message);
+  }
+}
+
 app.post('/api/alerts/trigger-danger', async (req, res) => {
   try {
     const dangerReading = {
@@ -578,16 +618,19 @@ app.post('/api/alerts/trigger-danger', async (req, res) => {
     const reading = assessReading(dangerReading);
     appState.currentReading = reading;
     appState.currentStatus = 'danger';
-    
+
+    // Trigger physical buzzer directly on ESP8266 via HTTP
+    await triggerDeviceBuzzer('on');
+
     await sendEmail(
       'danger',
       reading,
-      'Smart Helmet - DANGER TRIGGER TEST',
-      `Manual danger trigger test activated.\n\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nRisk Score: ${reading.riskScore}/100\n\nThis is a TEST ALERT triggered from the dashboard.`
+      '🚨 Smart Helmet - DANGER TRIGGER TEST',
+      `Manual danger trigger test activated from dashboard.\n\nTemperature: ${reading.temperature.toFixed(1)} °C 🔴\nHumidity: ${reading.humidity.toFixed(1)} % 🔴\nGas Level: ${reading.gasLevel.toFixed(1)} ppm 🔴\nRisk Score: ${reading.riskScore}/100\n\nThis is a TEST ALERT triggered from the dashboard.`
     );
-    
-    addAlertRecord({ type: 'test', level: 'danger', status: 'triggered', message: 'Danger trigger test - danger email sent', reading });
-    return res.json({ success: true, message: 'Danger test triggered and email sent', reading });
+
+    addAlertRecord({ type: 'test', level: 'danger', status: 'triggered', message: 'Danger trigger — buzzer command sent to device + email sent', reading });
+    return res.json({ success: true, message: 'Danger test triggered: buzzer command sent to helmet + email sent', reading });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to trigger danger test', detail: error.message });
   }
