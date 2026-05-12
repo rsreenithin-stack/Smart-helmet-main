@@ -106,7 +106,6 @@ function toggleMobileMenu() {
 
 // ============ DATA FETCHING ============
 const THINGSPEAK_BASE = `https://api.thingspeak.com/channels/${state.thinkSpeakConfig.channelId}`;
-const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — if last reading is older, show Disconnected
 
 function startDataFetch() {
     setInterval(fetchThinkSpeakData, state.thinkSpeakConfig.updateInterval * 1000);
@@ -129,32 +128,27 @@ async function fetchThinkSpeakData() {
         }
 
         const feed = data.feeds[data.feeds.length - 1];
-        const feedTime = feed.created_at ? new Date(feed.created_at).getTime() : 0;
-        const ageMs = Date.now() - feedTime;
+        const temperature = parseFloat(feed.field1);
+        const humidity    = parseFloat(feed.field2);
+        const gasLevel    = parseFloat(feed.field3);
 
-        // If data is older than 5 minutes, device is not actively sending
-        if (ageMs > STALE_THRESHOLD_MS) {
+        // If all fields are missing/NaN the device hasn't sent real data
+        if (isNaN(temperature) && isNaN(humidity) && isNaN(gasLevel)) {
             updateConnectionStatus(false);
-            // Still show the last known values but mark as stale
-            document.getElementById('lastUpdate').textContent =
-                `Last seen: ${new Date(feedTime).toLocaleTimeString()} (offline)`;
             return;
         }
 
-        const temperature = parseFloat(feed.field1) || 0;
-        const humidity    = parseFloat(feed.field2) || 0;
-        const gasLevel    = parseFloat(feed.field3) || 0;
+        state.sensors.temperature = isNaN(temperature) ? 0 : temperature;
+        state.sensors.humidity    = isNaN(humidity)    ? 0 : humidity;
+        state.sensors.gasLevel    = isNaN(gasLevel)    ? 0 : gasLevel;
 
-        state.sensors.temperature = temperature;
-        state.sensors.humidity    = humidity;
-        state.sensors.gasLevel    = gasLevel;
-
-        document.getElementById('lastUpdate').textContent = new Date(feedTime).toLocaleTimeString();
+        const feedTime = feed.created_at ? new Date(feed.created_at) : new Date();
+        document.getElementById('lastUpdate').textContent = feedTime.toLocaleTimeString();
 
         updateSensorDisplay();
-        updateChartData(temperature, humidity, gasLevel, feedTime);
+        updateChartData(state.sensors.temperature, state.sensors.humidity, state.sensors.gasLevel, feedTime);
         checkAlertConditions();
-        updateConnectionStatus(true);
+        updateConnectionStatus(true);  // ✅ Connected — real data received
 
     } catch (error) {
         console.error('Error fetching ThingSpeak data:', error);

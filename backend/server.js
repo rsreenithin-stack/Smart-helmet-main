@@ -151,12 +151,6 @@ function mapFeed(feed) {
     timestamp: feed.created_at || new Date().toISOString()
   };
 
-  // If the feed timestamp is older than 5 minutes, treat as stale/disconnected
-  const feedAge = Date.now() - new Date(reading.timestamp).getTime();
-  if (feedAge > 5 * 60 * 1000) {
-    reading.isStale = true;
-  }
-
   const assessed = assessReading(reading);
   if (assessed.deviceStatus >= 0 && assessed.deviceStatus <= 2) {
     assessed.sourceStatus = assessed.deviceStatus;
@@ -293,19 +287,6 @@ async function refreshLatestReading(force = false) {
   try {
     const feed = await fetchLatestFeed();
     const reading = mapFeed(feed);
-
-    // If data is stale (device not sending), treat as fallback
-    if (reading.isStale) {
-      appState.pollFailures += 1;
-      appState.lastError = 'Device data is stale — helmet may be offline';
-      appState.isFallbackData = true;
-      if (!appState.currentReading) {
-        appState.currentReading = reading;
-        appState.lastFetchedAt = now;
-      }
-      return appState.currentReading;
-    }
-
     const signature = [reading.overallStatus, reading.temperature.toFixed(1), reading.humidity.toFixed(1), reading.gasLevel.toFixed(1)].join('|');
 
     appState.currentReading = reading;
