@@ -54,9 +54,9 @@ const emailTransporter = emailReady
 const appState = {
   currentReading: null,
   currentStatus: 'normal',
-  previousStatus: 'normal',       // track status transitions
+  previousStatus: 'normal',
   lastFetchedAt: 0,
-  lastNormalEmailAt: Date.now(),
+  lastNormalEmailAt: 0,          // 0 = send first normal email immediately on startup
   lastWarningEmailAt: 0,
   lastDangerEmailAt: 0,
   latestSignature: '',
@@ -330,15 +330,18 @@ async function evaluateAlertPolicy(reading) {
     // Reset buzzer command on device when returning to normal
     if (statusChanged) await triggerDeviceBuzzer('off');
 
-    // Hourly status report
+    // Hourly status report — also fires immediately on first startup
     if (now - appState.lastNormalEmailAt >= EMAIL_INTERVAL) {
+      const isFirst = appState.lastNormalEmailAt === 0;
       try {
         await sendEmail(
           'normal', reading,
-          'Smart Helmet - Hourly Status Report',
-          `The helmet is operating normally.\n\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nRisk Score: ${reading.riskScore}/100`
+          isFirst ? 'Smart Helmet - System Online ✅' : 'Smart Helmet - Hourly Status Report',
+          `${isFirst ? '✅ Smart Helmet system is now ONLINE and monitoring.\n\n' : ''}The helmet is operating normally.\n\nTemperature: ${reading.temperature.toFixed(1)} °C ✅\nHumidity: ${reading.humidity.toFixed(1)} % ✅\nGas Level: ${reading.gasLevel.toFixed(1)} ppm ✅\nRisk Score: ${reading.riskScore}/100\n\nNext status report in 1 hour.`
         );
         appState.lastNormalEmailAt = now;
+        const nextAt = new Date(now + EMAIL_INTERVAL).toLocaleTimeString();
+        console.log(`📧 Normal status email sent. Next hourly report at ${nextAt}`);
       } catch (error) {
         console.error('❌ Hourly email failed:', error.message);
         addAlertRecord({ type: 'email', level: 'normal', status: 'failed', message: error.message, reading });
