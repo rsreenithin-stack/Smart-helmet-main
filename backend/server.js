@@ -25,9 +25,9 @@ const THRESHOLDS = {
 
 const EMAIL_INTERVAL = Math.max(1, Number(process.env.EMAIL_INTERVAL_HOURS || 1)) * 60 * 60 * 1000;
 const ALERT_EMAIL_ADDRESS = process.env.ALERT_EMAIL_ADDRESS || process.env.EMAIL_USER || '';
-const ALERT_COOLDOWN = 5 * 60 * 1000;
-const POLL_INTERVAL = 20 * 1000;
-const CACHE_TTL = 12 * 1000;
+const ALERT_COOLDOWN = 30 * 1000;   // 30 seconds between repeated warning/danger emails
+const POLL_INTERVAL = 5 * 1000;     // poll ThingSpeak every 5 seconds
+const CACHE_TTL = 4 * 1000;         // cache for 4 seconds
 const MAX_ALERTS = 200;
 
 // Only create transporter if credentials look real (not placeholders)

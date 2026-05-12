@@ -1,36 +1,34 @@
 // ============ GLOBAL STATE ============
+const THINGSPEAK_CHANNEL_ID = '3376690';
+const THINGSPEAK_API_KEY    = '8JKU7MB5273R0GQQ';
+const THINGSPEAK_BASE       = `https://api.thingspeak.com/channels/${THINGSPEAK_CHANNEL_ID}`;
+const POLL_INTERVAL_MS      = 5000;   // fetch every 5 seconds
+const HISTORY_INTERVAL_MS   = 30000;  // update charts every 30 seconds
+
 const state = {
-    deviceId: 'HELMET-001',
-    sensors: {
-        temperature: 0,
-        humidity: 0,
-        gasLevel: 0
-    },
+    deviceId: 'ESP-CCE1E1',
+    sensors: { temperature: 0, humidity: 0, gasLevel: 0 },
     thresholds: {
-        tempWarning: 35,
-        tempDanger: 45,
-        humidityWarning: 70,
-        humidityDanger: 80,
-        gasWarning: 300,
-        gasDanger: 600
+        tempWarning: 35,    tempDanger: 45,
+        humidityWarning: 70, humidityDanger: 80,
+        gasWarning: 300,    gasDanger: 600
     },
     thinkSpeakConfig: {
-        channelId: '3376690',
-        apiKey: '8JKU7MB5273R0GQQ',
-        updateInterval: 15
+        channelId: THINGSPEAK_CHANNEL_ID,
+        apiKey: THINGSPEAK_API_KEY,
+        updateInterval: 5
     },
     alerts: [],
-    chartData: {
-        temp: [],
-        humidity: [],
-        gas: [],
-        time: []
-    },
+    chartData: { temp: [], humidity: [], gas: [], time: [] },
     lastAlertTime: 0,
     emailLastSent: 0,
-    emailInterval: 3600000, // 1 hour
+    emailInterval: 3600000,   // 1 hour for normal status
     currentAlertLevel: 'normal',
-    buzzerActive: false
+    previousAlertLevel: 'normal',
+    buzzerActive: false,
+    audioUnlocked: false,
+    audioContext: null,
+    alarmInterval: null
 };
 
 // ============ INITIALIZATION ============
@@ -40,20 +38,39 @@ document.addEventListener('DOMContentLoaded', () => {
     startDataFetch();
     initializeCharts();
     setupHamburgerMenu();
+    unlockAudioOnInteraction(); // unlock audio on first user tap/click
 });
 
 function initializeApp() {
-    // Set device ID
-    document.getElementById('deviceId').textContent = state.deviceId;
-    
-    // Initialize 3D canvas
+    const devEl = document.getElementById('deviceId');
+    if (devEl) devEl.textContent = state.deviceId;
     init3DScene();
-    
-    // Start as disconnected — only set Connected after real data arrives
     updateConnectionStatus(false);
-    
-    // Load ThinkSpeak configuration
     loadThinkSpeakConfig();
+}
+
+// Unlock Web Audio API on first user interaction (required by browsers)
+function unlockAudioOnInteraction() {
+    const unlock = () => {
+        if (state.audioUnlocked) return;
+        const ctx = getAudioContext();
+        if (ctx && ctx.state === 'suspended') ctx.resume();
+        state.audioUnlocked = true;
+        document.removeEventListener('click', unlock);
+        document.removeEventListener('touchstart', unlock);
+        document.removeEventListener('keydown', unlock);
+    };
+    document.addEventListener('click', unlock);
+    document.addEventListener('touchstart', unlock);
+    document.addEventListener('keydown', unlock);
+}
+
+function getAudioContext() {
+    if (!state.audioContext) {
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        if (Ctor) state.audioContext = new Ctor();
+    }
+    return state.audioContext;
 }
 
 // ============ EVENT LISTENERS ============
@@ -115,14 +132,11 @@ function toggleMobileMenu() {
 }
 
 // ============ DATA FETCHING ============
-const THINGSPEAK_BASE = `https://api.thingspeak.com/channels/${state.thinkSpeakConfig.channelId}`;
-
 function startDataFetch() {
-    setInterval(fetchThinkSpeakData, state.thinkSpeakConfig.updateInterval * 1000);
-    fetchThinkSpeakData();
-    // Fetch history for charts every 60 seconds
-    setInterval(fetchThinkSpeakHistory, 60000);
+    fetchThinkSpeakData(); // immediate first fetch
+    setInterval(fetchThinkSpeakData, POLL_INTERVAL_MS);
     fetchThinkSpeakHistory();
+    setInterval(fetchThinkSpeakHistory, HISTORY_INTERVAL_MS);
 }
 
 async function fetchThinkSpeakData() {
@@ -303,110 +317,63 @@ function updateConnectionStatus(isConnected) {
 function checkAlertConditions() {
     const { temperature, humidity, gasLevel } = state.sensors;
     const { tempWarning, tempDanger, humidityWarning, humidityDanger, gasWarning, gasDanger } = state.thresholds;
-    
+
     let alertLevel = 'normal';
     let alertMessage = '';
-    let shouldAlert = false;
 
-    // Check danger conditions
-    if (temperature >= tempDanger) {
+    if (temperature >= tempDanger || humidity >= humidityDanger || gasLevel >= gasDanger) {
         alertLevel = 'danger';
-        alertMessage = `DANGER: Temperature ${temperature.toFixed(1)}°C exceeds safe limit!`;
-        shouldAlert = true;
-    } else if (humidity >= humidityDanger) {
-        alertLevel = 'danger';
-        alertMessage = `DANGER: Humidity ${humidity.toFixed(1)}% exceeds safe limit!`;
-        shouldAlert = true;
-    } else if (gasLevel >= gasDanger) {
-        alertLevel = 'danger';
-        alertMessage = `DANGER: Gas level ${gasLevel.toFixed(1)} ppm exceeds safe limit!`;
-        shouldAlert = true;
-    }
-    // Check warning conditions
-    else if (temperature >= tempWarning) {
+        if (temperature >= tempDanger)  alertMessage = `DANGER: Temperature ${temperature.toFixed(1)}°C exceeds safe limit!`;
+        else if (humidity >= humidityDanger) alertMessage = `DANGER: Humidity ${humidity.toFixed(1)}% exceeds safe limit!`;
+        else alertMessage = `DANGER: Gas level ${gasLevel.toFixed(1)} ppm exceeds safe limit!`;
+    } else if (temperature >= tempWarning || humidity >= humidityWarning || gasLevel >= gasWarning) {
         alertLevel = 'warning';
-        alertMessage = `WARNING: Temperature ${temperature.toFixed(1)}°C is high`;
-        shouldAlert = true;
-    } else if (humidity >= humidityWarning) {
-        alertLevel = 'warning';
-        alertMessage = `WARNING: Humidity ${humidity.toFixed(1)}% is high`;
-        shouldAlert = true;
-    } else if (gasLevel >= gasWarning) {
-        alertLevel = 'warning';
-        alertMessage = `WARNING: Gas level ${gasLevel.toFixed(1)} ppm is high`;
-        shouldAlert = true;
+        if (temperature >= tempWarning)  alertMessage = `WARNING: Temperature ${temperature.toFixed(1)}°C is high`;
+        else if (humidity >= humidityWarning) alertMessage = `WARNING: Humidity ${humidity.toFixed(1)}% is high`;
+        else alertMessage = `WARNING: Gas level ${gasLevel.toFixed(1)} ppm is high`;
     }
 
+    const levelChanged = alertLevel !== state.currentAlertLevel;
+    state.previousAlertLevel = state.currentAlertLevel;
     state.currentAlertLevel = alertLevel;
 
-    if (shouldAlert) {
-        triggerAlert(alertLevel, alertMessage);
+    if (alertLevel === 'normal') {
+        if (levelChanged) {
+            stopAlarm();
+            hidealertBanner();
+            updateBuzzerUI();
+        }
     } else {
-        state.buzzerActive = false;
-        updateBuzzerUI();
-        hidealertBanner();
+        // Trigger alarm and alert on level change or every 30s for same level
+        const now = Date.now();
+        if (levelChanged || now - state.lastAlertTime > 30000) {
+            state.lastAlertTime = now;
+            triggerAlert(alertLevel, alertMessage);
+        }
     }
 }
 
 function triggerAlert(level, message) {
-    const now = Date.now();
-    
     // Add to alerts list
-    state.alerts.unshift({
-        level,
-        message,
-        timestamp: new Date(),
-        dismissed: false
-    });
+    state.alerts.unshift({ level, message, timestamp: new Date(), dismissed: false });
 
     // Show alert banner
     showAlertBanner(level, message);
 
-    // Trigger buzzer
-    if (level === 'danger') {
-        triggerBuzzer('danger');
-    } else if (level === 'warning') {
-        triggerBuzzer('warning');
-    }
+    // Start alarm sound
+    triggerBuzzer(level);
 
-    // Send email if it's been more than 1 hour since last email, or if this is an alert
-    const timeSinceLastEmail = now - state.emailLastSent;
-    if (timeSinceLastEmail >= state.emailInterval || level === 'danger' || level === 'warning') {
-        sendEmailAlert(level, message);
-        state.emailLastSent = now;
-    }
+    // Send email via backend (works on localhost:3000)
+    sendEmailAlert(level, message);
 
     // Update UI
     addAlertToList(level, message);
     updateStatistics();
+    showNotification(level === 'danger' ? `🚨 ${message}` : `⚠️ ${message}`, level);
 }
 
 function triggerBuzzer(level) {
-    state.buzzerActive = true;
-    updateBuzzerUI();
-    
-    // Play sound
-    playAlertSound(level);
-
-    if (level === 'danger') {
-        // Continuous alert
-        const buzzer = setInterval(() => {
-            if (state.currentAlertLevel !== 'danger') {
-                clearInterval(buzzer);
-                return;
-            }
-            playAlertSound('danger');
-        }, 1000);
-    } else if (level === 'warning') {
-        // Flickering alert with 1 second delay
-        const buzzer = setInterval(() => {
-            if (state.currentAlertLevel !== 'warning') {
-                clearInterval(buzzer);
-                return;
-            }
-            playAlertSound('warning');
-        }, 2000);
-    }
+    startAlarm(level);
 }
 
 function updateBuzzerUI() {
@@ -436,31 +403,61 @@ function updateBuzzerUI() {
 
 function testBuzzer() {
     playAlertSound('warning');
-    showNotification('Test alert triggered!');
+    showNotification('🔔 Test alarm triggered!');
 }
 
 function playAlertSound(level) {
-    // Create audio context
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume();
 
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
 
     if (level === 'danger') {
-        oscillator.frequency.value = 1000; // Higher pitch
-        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.5);
-    } else if (level === 'warning') {
-        oscillator.frequency.value = 600;
-        gainNode.gain.setValueAtTime(0.2, audioContext.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-        oscillator.start(audioContext.currentTime);
-        oscillator.stop(audioContext.currentTime + 0.3);
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(880, now);
+        osc.frequency.setValueAtTime(660, now + 0.15);
+        osc.frequency.setValueAtTime(880, now + 0.30);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+        osc.start(now);
+        osc.stop(now + 0.45);
+    } else {
+        osc.type = 'square';
+        osc.frequency.value = 720;
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+        osc.start(now);
+        osc.stop(now + 0.25);
     }
+}
+
+function startAlarm(level) {
+    stopAlarm(); // clear any existing alarm
+    state.buzzerActive = true;
+    updateBuzzerUI();
+    playAlertSound(level);
+    const interval = level === 'danger' ? 600 : 1500;
+    state.alarmInterval = setInterval(() => {
+        if (state.currentAlertLevel === level || (level === 'warning' && state.currentAlertLevel !== 'normal')) {
+            playAlertSound(state.currentAlertLevel);
+        } else {
+            stopAlarm();
+        }
+    }, interval);
+}
+
+function stopAlarm() {
+    if (state.alarmInterval) {
+        clearInterval(state.alarmInterval);
+        state.alarmInterval = null;
+    }
+    state.buzzerActive = false;
+    updateBuzzerUI();
 }
 
 function showAlertBanner(level, message) {
@@ -526,25 +523,20 @@ function filterAlerts(type) {
 // ============ EMAIL NOTIFICATIONS ============
 async function sendEmailAlert(level, message) {
     try {
-        const response = await fetch('/api/send-email', {
+        // Use backend API for email (works on localhost:3000)
+        const response = await fetch('/api/alerts/test', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                level,
-                message,
-                deviceId: state.deviceId,
-                timestamp: new Date().toISOString(),
-                sensorData: state.sensors
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'email' })
         });
-
         if (response.ok) {
-            console.log('Email alert sent successfully');
+            console.log(`✅ Email alert sent [${level}]`);
+        } else {
+            console.warn(`⚠️ Email API returned ${response.status}`);
         }
     } catch (error) {
-        console.error('Error sending email alert:', error);
+        // On Vercel (no backend), silently skip — email handled by backend server
+        console.warn('Email not sent (no backend):', error.message);
     }
 }
 
@@ -726,27 +718,27 @@ function loadThinkSpeakConfig() {
 }
 
 // ============ NOTIFICATIONS ============
-function showNotification(message) {
-    // Create a simple toast notification
+function showNotification(message, level = 'normal') {
     const notification = document.createElement('div');
+    const bg = level === 'danger' ? 'rgba(255,59,79,0.95)' 
+             : level === 'warning' ? 'rgba(255,176,32,0.95)' 
+             : 'linear-gradient(45deg,#00d4ff,#7b61ff)';
     notification.style.cssText = `
-        position: fixed;
-        bottom: 20px;
-        right: 20px;
-        background: linear-gradient(45deg, #00d4ff, #ff6b9d);
-        color: white;
-        padding: 15px 25px;
-        border-radius: 10px;
-        z-index: 2000;
+        position: fixed; bottom: 20px; right: 20px;
+        background: ${bg}; color: white;
+        padding: 14px 22px; border-radius: 12px;
+        font-weight: 600; font-size: 14px;
+        z-index: 3000; max-width: 320px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
         animation: slideInUp 0.3s ease-out;
     `;
     notification.textContent = message;
     document.body.appendChild(notification);
-
     setTimeout(() => {
-        notification.style.animation = 'slideOutDown 0.3s ease-out';
+        notification.style.opacity = '0';
+        notification.style.transition = 'opacity 0.3s';
         setTimeout(() => notification.remove(), 300);
-    }, 3000);
+    }, 4000);
 }
 
 // ============ 3D ANIMATION ============
