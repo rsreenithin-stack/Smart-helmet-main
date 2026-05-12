@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartHelmet IoT Dashboard - Mining Safety System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <div class="nav-logo">
+                <i class="fas fa-hard-hat"></i> SmartHelmet
+            </div>
+            <ul class="nav-menu">
+                <li class="nav-item"><a href="#dashboard" class="nav-link">Dashboard</a></li>
+                <li class="nav-item"><a href="#analytics" class="nav-link">Analytics</a></li>
+                <li class="nav-item"><a href="#alerts" class="nav-link">Alerts</a></li>
+            </ul>
+            <div class="hamburger">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Alert Banner -->
+    <div id="alertBanner" class="alert-banner" style="display: none;"></div>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <h1>SmartHelmet IoT Dashboard</h1>
+            <p>Real-time Mining Safety Monitoring System</p>
+            <div class="status-indicator">
+                <span id="connectionStatus" class="status-dot"></span>
+                <span id="statusText">Connecting...</span>
+            </div>
+        </div>
+        <div class="hero-3d">
+            <canvas id="helmetCanvas"></canvas>
+        </div>
+    </section>
+
+    <!-- Main Dashboard -->
+    <section id="dashboard" class="dashboard-section">
+        <h2>Live Sensor Data</h2>
+        
+        <!-- 3D Sensor Cards -->
+        <div class="sensor-grid">
+            <!-- Temperature Card -->
+            <div class="sensor-card temp-card">
+                <div class="card-header">
+                    <i class="fas fa-thermometer-half"></i>
+                    <h3>Temperature</h3>
+                </div>
+                <div class="card-content">
+                    <div class="sensor-display">
+                        <svg class="gauge temp-gauge" viewBox="0 0 200 200">
+                            <circle cx="100" cy="100" r="90" class="gauge-bg"></circle>
+                            <circle cx="100" cy="100" r="90" class="gauge-fill" id="tempGauge"></circle>
+                            <text x="100" y="100" class="gauge-label" id="tempValue">0°C</text>
+                        </svg>
+                    </div>
+                    <div class="sensor-details">
+                        <p class="sensor-status" id="tempStatus">Normal</p>
+                        <p class="sensor-range">Range: 0°C - 50°C</p>
+                        <p class="sensor-threshold">Warning: >35°C | Danger: >45°C</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Humidity Card -->
+            <div class="sensor-card humidity-card">
+                <div class="card-header">
+                    <i class="fas fa-tint"></i>
+                    <h3>Humidity</h3>
+                </div>
+                <div class="card-content">
+                    <div class="sensor-display">
+                        <svg class="gauge humidity-gauge" viewBox="0 0 200 200">
+                            <circle cx="100" cy="100" r="90" class="gauge-bg"></circle>
+                            <circle cx="100" cy="100" r="90" class="gauge-fill" id="humidityGauge"></circle>
+                            <text x="100" y="100" class="gauge-label" id="humidityValue">0%</text>
+                        </svg>
+                    </div>
+                    <div class="sensor-details">
+                        <p class="sensor-status" id="humidityStatus">Normal</p>
+                        <p class="sensor-range">Range: 0% - 100%</p>
+                        <p class="sensor-threshold">Warning: <30% or >70% | Danger: <20% or >80%</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gas Level Card -->
+            <div class="sensor-card gas-card">
+                <div class="card-header">
+                    <i class="fas fa-cloud"></i>
+                    <h3>Gas Level (MQ-2)</h3>
+                </div>
+                <div class="card-content">
+                    <div class="sensor-display">
+                        <svg class="gauge gas-gauge" viewBox="0 0 200 200">
+                            <circle cx="100" cy="100" r="90" class="gauge-bg"></circle>
+                            <circle cx="100" cy="100" r="90" class="gauge-fill" id="gasGauge"></circle>
+                            <text x="100" y="100" class="gauge-label" id="gasValue">0 ppm</text>
+                        </svg>
+                    </div>
+                    <div class="sensor-details">
+                        <p class="sensor-status" id="gasStatus">Normal</p>
+                        <p class="sensor-range">Range: 0 - 1000 ppm</p>
+                        <p class="sensor-threshold">Warning: >300 ppm | Danger: >600 ppm</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Buzzer Status Card -->
+            <div class="sensor-card buzzer-card">
+                <div class="card-header">
+                    <i class="fas fa-bell"></i>
+                    <h3>Alert System</h3>
+                </div>
+                <div class="card-content">
+                    <div class="buzzer-display">
+                        <div id="buzzerIndicator" class="buzzer-inactive">
+                            <i class="fas fa-volume-mute"></i>
+                        </div>
+                    </div>
+                    <div class="sensor-details">
+                        <p class="sensor-status" id="buzzerStatus">Silent</p>
+                        <p id="buzzerMode">No Alert</p>
+                        <button id="testDangerTrigger" class="btn-trigger-danger">🚨 Trigger Danger Test</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Status Panel -->
+        <div class="system-panel">
+            <div class="panel-item">
+                <label>Device ID:</label>
+                <span id="deviceId">Loading...</span>
+            </div>
+            <div class="panel-item">
+                <label>Last Update:</label>
+                <span id="lastUpdate">--:--:--</span>
+            </div>
+            <div class="panel-item">
+                <label>ThingSpeak Source:</label>
+                <span id="thinkSpeakLink"><a href="#" target="_blank">Preset read-only channel</a></span>
+            </div>
+            <div class="panel-item">
+                <label>Dashboard Mode:</label>
+                <span class="health-good">Cloud parameters only</span>
+            </div>
+            <div class="panel-item">
+                <label>System Health:</label>
+                <span id="systemHealth" class="health-good">Good</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Analytics Section -->
+    <section id="analytics" class="analytics-section">
+        <h2>Analytics & History</h2>
+        
+        <div class="analytics-controls">
+            <button class="filter-btn active" data-filter="1h">1 Hour</button>
+            <button class="filter-btn" data-filter="6h">6 Hours</button>
+            <button class="filter-btn" data-filter="24h">24 Hours</button>
+            <button class="filter-btn" data-filter="7d">7 Days</button>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-container">
+                <h3>Temperature Trend</h3>
+                <canvas id="tempChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Humidity Trend</h3>
+                <canvas id="humidityChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Gas Level Trend</h3>
+                <canvas id="gasChart"></canvas>
+            </div>
+            <div class="chart-container">
+                <h3>Alert History</h3>
+                <div id="alertHistory" class="alert-history-list"></div>
+            </div>
+        </div>
+
+        <!-- Statistics -->
+        <div class="statistics">
+            <div class="stat-box">
+                <h4>Average Temperature</h4>
+                <p id="avgTemp" class="stat-value">0°C</p>
+            </div>
+            <div class="stat-box">
+                <h4>Average Humidity</h4>
+                <p id="avgHumidity" class="stat-value">0%</p>
+            </div>
+            <div class="stat-box">
+                <h4>Peak Gas Level</h4>
+                <p id="peakGas" class="stat-value">0 ppm</p>
+            </div>
+            <div class="stat-box">
+                <h4>Total Alerts</h4>
+                <p id="totalAlerts" class="stat-value">0</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Alerts Section -->
+    <section id="alerts" class="alerts-section">
+        <h2>Alert Logs</h2>
+        
+        <div class="alert-filters">
+            <button class="alert-filter-btn active" data-alert="all">All</button>
+            <button class="alert-filter-btn" data-alert="warning">Warning</button>
+            <button class="alert-filter-btn" data-alert="danger">Danger</button>
+        </div>
+
+        <div class="alerts-list">
+            <div class="alert-item example">
+                <div class="alert-icon danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                </div>
+                <div class="alert-content">
+                    <h4>High Temperature Detected</h4>
+                    <p>Temperature exceeded safe threshold (48°C)</p>
+                    <span class="alert-time">2 minutes ago</span>
+                </div>
+                <div class="alert-actions">
+                    <button class="btn-dismiss">Dismiss</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 3D Animation Container -->
+    <canvas id="canvas3D" class="canvas-3d"></canvas>
+
+    <!-- Scripts -->
+    <script src="/vendor/chart.js/dist/chart.umd.min.js"></script>
+    <script type="module">
+        import * as THREE from '/vendor/three/build/three.module.min.js';
+        window.THREE = THREE;
+    </script>
+    <script src="dashboard.js"></script>
+</body>
+</html>

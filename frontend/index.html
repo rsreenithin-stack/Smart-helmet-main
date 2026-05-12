@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Mining Helmet - Safety Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Animated Background -->
+        <div class="animated-background">
+            <div class="blob blob-1"></div>
+            <div class="blob blob-2"></div>
+            <div class="blob blob-3"></div>
+        </div>
+
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <div class="helmet-icon">⛑️</div>
+                    <h1>Smart Mining Helmet</h1>
+                </div>
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <span class="status-text">INITIALIZING...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Dashboard -->
+        <main class="dashboard">
+            <!-- 3D Helmet Model Section -->
+            <section class="helmet-3d-section">
+                <div id="helmetCanvas"></div>
+                <div class="helmet-info">
+                    <h3>Live 3D Helmet Model</h3>
+                    <p>Real-time sensor visualization</p>
+                </div>
+            </section>
+
+            <!-- Real-time Sensor Gauges -->
+            <section class="sensors-section">
+                <div class="sensor-card temperature-card">
+                    <div class="sensor-header">
+                        <h3>🌡️ Temperature</h3>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="tempGauge"></canvas>
+                    </div>
+                    <div class="sensor-value" id="tempValue">--°C</div>
+                    <div class="sensor-range">
+                        <span class="range-min">-5°C</span>
+                        <span class="range-max">50°C</span>
+                    </div>
+                </div>
+
+                <div class="sensor-card humidity-card">
+                    <div class="sensor-header">
+                        <h3>💧 Humidity</h3>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="humidityGauge"></canvas>
+                    </div>
+                    <div class="sensor-value" id="humidityValue">--%</div>
+                    <div class="sensor-range">
+                        <span class="range-min">10%</span>
+                        <span class="range-max">95%</span>
+                    </div>
+                </div>
+
+                <div class="sensor-card gas-card">
+                    <div class="sensor-header">
+                        <h3>☠️ Gas Level</h3>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="gasGauge"></canvas>
+                    </div>
+                    <div class="sensor-value" id="gasValue">-- ppm</div>
+                    <div class="sensor-range">
+                        <span class="range-min">0 ppm</span>
+                        <span class="range-max">1000 ppm</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Alert System -->
+            <section class="alert-section">
+                <div class="alert-header">
+                    <h2>⚠️ Alert Status</h2>
+                </div>
+                <div class="alert-container" id="alertContainer">
+                    <div class="alert-normal">
+                        <span class="alert-icon">✅</span>
+                        <span class="alert-message">System Operating Normally</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Analytics Dashboard -->
+            <section class="analytics-section">
+                <h2>📊 Analytics & History</h2>
+                
+                <div class="chart-grid">
+                    <div class="chart-card">
+                        <h3>Temperature Trend (Last 24h)</h3>
+                        <canvas id="tempChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Humidity Trend (Last 24h)</h3>
+                        <canvas id="humidityChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Gas Level Trend (Last 24h)</h3>
+                        <canvas id="gasChart"></canvas>
+                    </div>
+                    <div class="chart-card">
+                        <h3>Alert Distribution</h3>
+                        <canvas id="alertChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Statistics Panel -->
+            <section class="stats-section">
+                <h2>📈 Statistics</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h4>Average Temperature</h4>
+                        <p class="stat-value" id="statAvgTemp">-- °C</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Average Humidity</h4>
+                        <p class="stat-value" id="statAvgHumidity">-- %</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Average Gas Level</h4>
+                        <p class="stat-value" id="statAvgGas">-- ppm</p>
+                    </div>
+                    <div class="stat-card">
+                        <h4>Total Alerts</h4>
+                        <p class="stat-value" id="statTotalAlerts">-- 🚨</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Control Panel -->
+            <section class="control-section">
+                <h2>🎛️ Control Panel</h2>
+                <div class="control-buttons">
+                    <button class="btn btn-primary" onclick="refreshData()">
+                        🔄 Refresh Data
+                    </button>
+                    <button class="btn btn-secondary" onclick="toggleAutoRefresh(this)">
+                        ⏱️ Auto Refresh: <span id="autoRefreshStatus">ON</span>
+                    </button>
+                    <button class="btn btn-danger" onclick="testEmailAlert()">
+                        📧 Test Email Alert
+                    </button>
+                    <button class="btn btn-danger" onclick="testPhoneAlert()">
+                        📞 Test Phone Alert
+                    </button>
+                </div>
+            </section>
+
+            <!-- Data Log -->
+            <section class="log-section">
+                <h2>📋 Data Log</h2>
+                <div class="log-container" id="dataLog">
+                    <p>Waiting for data...</p>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2026 Smart Mining Helmet Safety System | Real-time IoT Monitoring</p>
+            <p>Last Update: <span id="lastUpdate">--:--:--</span></p>
+        </footer>
+    </div>
+
+    <!-- Loading Spinner -->
+    <div class="loading-spinner" id="loadingSpinner">
+        <div class="spinner"></div>
+        <p>Loading Dashboard...</p>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

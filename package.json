@@ -1,0 +1,52 @@
+{
+  "name": "smart-mining-helmet",
+  "version": "1.0.0",
+  "description": "IoT-based Safety Monitoring System for Mining Workers",
+  "private": true,
+  "author": "Mining Safety Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/smart-mining-helmet"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "scripts": {
+    "start": "cd backend && npm start",
+    "dev": "cd backend && npm run dev",
+    "backend:start": "cd backend && npm start",
+    "backend:dev": "cd backend && npm run dev",
+    "frontend:serve": "cd frontend && python -m http.server 8000",
+    "docs": "open README.md",
+    "install:all": "cd backend && npm install"
+  },
+  "keywords": [
+    "mining",
+    "safety",
+    "iot",
+    "helmet",
+    "monitoring",
+    "esp8266",
+    "thingspeak",
+    "alert"
+  ],
+  "project": {
+    "hardware": [
+      "ESP8266 NodeMCU",
+      "DHT11 Temperature/Humidity Sensor",
+      "MQ-2 Gas Sensor",
+      "Active Buzzer 5V"
+    ],
+    "apis": [
+      "ThinkSpeak",
+      "Gmail SMTP",
+      "Twilio"
+    ],
+    "languages": [
+      "Arduino C/C++",
+      "Node.js JavaScript",
+      "Frontend JavaScript"
+    ]
+  }
+}
