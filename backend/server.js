@@ -54,6 +54,7 @@ const emailTransporter = emailReady
 const appState = {
   currentReading: null,
   currentStatus: 'normal',
+  previousStatus: 'normal',       // track status transitions
   lastFetchedAt: 0,
   lastNormalEmailAt: Date.now(),
   lastWarningEmailAt: 0,
@@ -287,7 +288,6 @@ async function refreshLatestReading(force = false) {
   try {
     const feed = await fetchLatestFeed();
     const reading = mapFeed(feed);
-    const signature = [reading.overallStatus, reading.temperature.toFixed(1), reading.humidity.toFixed(1), reading.gasLevel.toFixed(1)].join('|');
 
     appState.currentReading = reading;
     appState.currentStatus = reading.overallStatus;
@@ -296,6 +296,7 @@ async function refreshLatestReading(force = false) {
     appState.lastError = null;
     appState.isFallbackData = false;
 
+    const signature = [reading.overallStatus, reading.temperature.toFixed(1), reading.humidity.toFixed(1), reading.gasLevel.toFixed(1)].join('|');
     if (signature !== appState.latestSignature) {
       appState.latestSignature = signature;
       addAlertRecord({ type: 'state', level: reading.overallStatus, status: 'updated', message: `State changed to ${reading.statusText}`, reading });
@@ -321,61 +322,63 @@ async function refreshLatestReading(force = false) {
 
 async function evaluateAlertPolicy(reading) {
   const now = Date.now();
+  const statusChanged = reading.overallStatus !== appState.previousStatus;
+  appState.previousStatus = reading.overallStatus;
 
+  // ── NORMAL ──────────────────────────────────────────────────────────────
   if (reading.overallStatus === 'normal') {
+    // Hourly status report
     if (now - appState.lastNormalEmailAt >= EMAIL_INTERVAL) {
       try {
         await sendEmail(
-          'normal',
-          reading,
+          'normal', reading,
           'Smart Helmet - Hourly Status Report',
           `The helmet is operating normally.\n\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nRisk Score: ${reading.riskScore}/100`
         );
         appState.lastNormalEmailAt = now;
       } catch (error) {
-        console.error('❌ Failed to send hourly email:', error.message);
-        addAlertRecord({ type: 'email', level: 'normal', status: 'failed', message: `Email send failed: ${error.message}`, reading });
+        console.error('❌ Hourly email failed:', error.message);
+        addAlertRecord({ type: 'email', level: 'normal', status: 'failed', message: error.message, reading });
       }
     }
-
     return;
   }
 
+  // ── WARNING ──────────────────────────────────────────────────────────────
   if (reading.overallStatus === 'warning') {
-    if (now - appState.lastWarningEmailAt >= ALERT_COOLDOWN) {
+    // Fire immediately on first detection (statusChanged) OR after cooldown
+    const shouldSend = statusChanged || (now - appState.lastWarningEmailAt >= ALERT_COOLDOWN);
+    if (shouldSend) {
       try {
         await sendEmail(
-          'warning',
-          reading,
-          'Smart Helmet - WARNING ALERT',
-          `Warning condition detected.\n\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nRisk Score: ${reading.riskScore}/100`
+          'warning', reading,
+          '⚠️ Smart Helmet - WARNING ALERT',
+          `⚠️ WARNING condition detected on your Smart Mining Helmet!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempWarning ? '🔴 HIGH' : '✅'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityWarning ? '🔴 HIGH' : '✅'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasWarning ? '🔴 HIGH' : '✅'}\nRisk Score: ${reading.riskScore}/100\n\nPlease check the helmet immediately.`
         );
         appState.lastWarningEmailAt = now;
       } catch (error) {
-        console.error('❌ Failed to send warning email:', error.message);
-        addAlertRecord({ type: 'email', level: 'warning', status: 'failed', message: `Email send failed: ${error.message}`, reading });
+        console.error('❌ Warning email failed:', error.message);
+        addAlertRecord({ type: 'email', level: 'warning', status: 'failed', message: error.message, reading });
       }
     }
-
     return;
   }
 
-  // danger path
-  if (now - appState.lastDangerEmailAt >= ALERT_COOLDOWN) {
+  // ── DANGER ───────────────────────────────────────────────────────────────
+  const shouldSend = statusChanged || (now - appState.lastDangerEmailAt >= ALERT_COOLDOWN);
+  if (shouldSend) {
     try {
       await sendEmail(
-        'danger',
-        reading,
-        'Smart Helmet - DANGER ALERT',
-        `Critical danger condition detected.\n\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nRisk Score: ${reading.riskScore}/100`
+        'danger', reading,
+        '🚨 Smart Helmet - DANGER ALERT',
+        `🚨 CRITICAL DANGER detected on your Smart Mining Helmet!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempDanger ? '🔴 DANGER' : '⚠️'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityDanger ? '🔴 DANGER' : '⚠️'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasDanger ? '🔴 DANGER' : '⚠️'}\nRisk Score: ${reading.riskScore}/100\n\n⚠️ IMMEDIATE EVACUATION MAY BE REQUIRED!`
       );
       appState.lastDangerEmailAt = now;
     } catch (error) {
-      console.error('❌ Failed to send danger email:', error.message);
-      addAlertRecord({ type: 'email', level: 'danger', status: 'failed', message: `Email send failed: ${error.message}`, reading });
+      console.error('❌ Danger email failed:', error.message);
+      addAlertRecord({ type: 'email', level: 'danger', status: 'failed', message: error.message, reading });
     }
   }
-  // Phone call alerts are disabled (Twilio removed)
 }
 
 function transformHistoryFeeds(feeds) {
