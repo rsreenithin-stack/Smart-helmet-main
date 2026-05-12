@@ -279,11 +279,13 @@ function updateConnectionStatus(isConnected) {
     const statusText = document.getElementById('statusText');
     
     if (isConnected) {
-        statusDot.classList.add('connected');
+        statusDot.className = 'status-dot connected';
         statusText.textContent = 'Connected';
+        statusText.style.color = '#00ff88';
     } else {
-        statusDot.classList.remove('connected');
+        statusDot.className = 'status-dot disconnected';
         statusText.textContent = 'Disconnected';
+        statusText.style.color = '#ff3b4f';
     }
 }
 

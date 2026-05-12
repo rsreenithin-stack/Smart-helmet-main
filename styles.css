@@ -230,6 +230,16 @@ h3,
     background: var(--success);
 }
 
+.status-dot.disconnected {
+    background: #ff3b4f;
+    animation: pulse-danger 0.8s ease-in-out infinite;
+}
+
+@keyframes pulse-danger {
+    0%, 100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(255,59,79,0.7); }
+    50% { opacity: 0.7; transform: scale(1.2); box-shadow: 0 0 0 6px rgba(255,59,79,0); }
+}
+
 .hero-3d {
     position: relative;
     height: 500px;
