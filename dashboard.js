@@ -852,6 +852,20 @@ async function refreshCurrent(force = false) {
         }
 
         const payload = await response.json();
+
+        // If backend is serving fallback/demo data, show Disconnected — no real device
+        if (payload.isFallback) {
+            updateConnectionState(false, 'Disconnected');
+            // Clear sensor displays
+            const na = '--';
+            const tempVal = el('tempValue'); if (tempVal) tempVal.textContent = `${na}°C`;
+            const humVal = el('humidityValue'); if (humVal) humVal.textContent = `${na}%`;
+            const gasVal = el('gasValue'); if (gasVal) gasVal.textContent = `${na} ppm`;
+            const health = el('systemHealth');
+            if (health) { health.className = ''; health.textContent = 'No Device'; }
+            return null;
+        }
+
         const reading = normalizeReading(payload);
         const statusChanged = reading.status !== state.currentStatus;
 

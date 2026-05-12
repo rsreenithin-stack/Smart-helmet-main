@@ -50,8 +50,8 @@ function initializeApp() {
     // Initialize 3D canvas
     init3DScene();
     
-    // Setup connection status
-    updateConnectionStatus(true);
+    // Start as disconnected — only set Connected after real data arrives
+    updateConnectionStatus(false);
     
     // Load ThinkSpeak configuration
     loadThinkSpeakConfig();
@@ -105,50 +105,102 @@ function toggleMobileMenu() {
 }
 
 // ============ DATA FETCHING ============
+const THINGSPEAK_BASE = `https://api.thingspeak.com/channels/${state.thinkSpeakConfig.channelId}`;
+const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes — if last reading is older, show Disconnected
+
 function startDataFetch() {
-    // Fetch from ThinkSpeak every N seconds
     setInterval(fetchThinkSpeakData, state.thinkSpeakConfig.updateInterval * 1000);
-    
-    // Initial fetch
     fetchThinkSpeakData();
+    // Fetch history for charts every 60 seconds
+    setInterval(fetchThinkSpeakHistory, 60000);
+    fetchThinkSpeakHistory();
 }
 
 async function fetchThinkSpeakData() {
     try {
-        const url = `https://api.thingspeak.com/channels/${state.thinkSpeakConfig.channelId}/feeds.json?api_key=${state.thinkSpeakConfig.apiKey}&results=1`;
-        
+        const url = `${THINGSPEAK_BASE}/feeds.json?api_key=${state.thinkSpeakConfig.apiKey}&results=1`;
         const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const data = await response.json();
-        
-        if (data.feeds && data.feeds.length > 0) {
-            const feed = data.feeds[0];
-            
-            // Extract sensor values
-            const temperature = parseFloat(feed.field1) || 0;
-            const humidity = parseFloat(feed.field2) || 0;
-            const gasLevel = parseFloat(feed.field3) || 0;
-            
-            // Update state
-            state.sensors.temperature = temperature;
-            state.sensors.humidity = humidity;
-            state.sensors.gasLevel = gasLevel;
-            
-            // Update timestamp
-            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
-            
-            // Update UI
-            updateSensorDisplay();
-            updateChartData();
-            
-            // Check alert conditions
-            checkAlertConditions();
-            
-            // Update connection status
-            updateConnectionStatus(true);
+
+        if (!data.feeds || data.feeds.length === 0) {
+            updateConnectionStatus(false);
+            return;
         }
+
+        const feed = data.feeds[data.feeds.length - 1];
+        const feedTime = feed.created_at ? new Date(feed.created_at).getTime() : 0;
+        const ageMs = Date.now() - feedTime;
+
+        // If data is older than 5 minutes, device is not actively sending
+        if (ageMs > STALE_THRESHOLD_MS) {
+            updateConnectionStatus(false);
+            // Still show the last known values but mark as stale
+            document.getElementById('lastUpdate').textContent =
+                `Last seen: ${new Date(feedTime).toLocaleTimeString()} (offline)`;
+            return;
+        }
+
+        const temperature = parseFloat(feed.field1) || 0;
+        const humidity    = parseFloat(feed.field2) || 0;
+        const gasLevel    = parseFloat(feed.field3) || 0;
+
+        state.sensors.temperature = temperature;
+        state.sensors.humidity    = humidity;
+        state.sensors.gasLevel    = gasLevel;
+
+        document.getElementById('lastUpdate').textContent = new Date(feedTime).toLocaleTimeString();
+
+        updateSensorDisplay();
+        updateChartData(temperature, humidity, gasLevel, feedTime);
+        checkAlertConditions();
+        updateConnectionStatus(true);
+
     } catch (error) {
-        console.error('Error fetching ThinkSpeak data:', error);
+        console.error('Error fetching ThingSpeak data:', error);
         updateConnectionStatus(false);
+    }
+}
+
+async function fetchThinkSpeakHistory() {
+    try {
+        const url = `${THINGSPEAK_BASE}/feeds.json?api_key=${state.thinkSpeakConfig.apiKey}&results=80`;
+        const response = await fetch(url);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!data.feeds || data.feeds.length === 0) return;
+
+        const labels = [], temps = [], humids = [], gases = [];
+        data.feeds.forEach(feed => {
+            const t = feed.created_at ? new Date(feed.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+            labels.push(t);
+            temps.push(parseFloat(feed.field1) || 0);
+            humids.push(parseFloat(feed.field2) || 0);
+            gases.push(parseFloat(feed.field3) || 0);
+        });
+
+        charts.temp.data.labels = labels;
+        charts.temp.data.datasets[0].data = temps;
+        charts.temp.update('none');
+
+        charts.humidity.data.labels = labels;
+        charts.humidity.data.datasets[0].data = humids;
+        charts.humidity.update('none');
+
+        charts.gas.data.labels = labels;
+        charts.gas.data.datasets[0].data = gases;
+        charts.gas.update('none');
+
+        // Update statistics from real history
+        const avgTemp = (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1);
+        const avgHum  = (humids.reduce((a, b) => a + b, 0) / humids.length).toFixed(1);
+        const peakGas = Math.max(...gases).toFixed(1);
+        document.getElementById('avgTemp').textContent     = avgTemp + '°C';
+        document.getElementById('avgHumidity').textContent = avgHum + '%';
+        document.getElementById('peakGas').textContent     = peakGas + ' ppm';
+
+    } catch (error) {
+        console.error('Error fetching ThingSpeak history:', error);
     }
 }
 
@@ -576,11 +628,10 @@ function initializeCharts() {
     });
 }
 
-function updateChartData() {
-    const now = new Date();
-    const timeString = now.getHours() + ':' + String(now.getMinutes()).padStart(2, '0');
+function updateChartData(temperature, humidity, gasLevel, feedTime) {
+    const timeString = new Date(feedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    // Keep only last 20 data points
+    // Keep only last 20 live data points (history fetch handles the full chart)
     if (state.chartData.time.length >= 20) {
         state.chartData.time.shift();
         state.chartData.temp.shift();
@@ -588,23 +639,13 @@ function updateChartData() {
         state.chartData.gas.shift();
     }
 
+    // Avoid duplicate timestamps
+    if (state.chartData.time[state.chartData.time.length - 1] === timeString) return;
+
     state.chartData.time.push(timeString);
-    state.chartData.temp.push(state.sensors.temperature);
-    state.chartData.humidity.push(state.sensors.humidity);
-    state.chartData.gas.push(state.sensors.gasLevel);
-
-    // Update charts
-    charts.temp.data.labels = state.chartData.time;
-    charts.temp.data.datasets[0].data = state.chartData.temp;
-    charts.temp.update();
-
-    charts.humidity.data.labels = state.chartData.time;
-    charts.humidity.data.datasets[0].data = state.chartData.humidity;
-    charts.humidity.update();
-
-    charts.gas.data.labels = state.chartData.time;
-    charts.gas.data.datasets[0].data = state.chartData.gas;
-    charts.gas.update();
+    state.chartData.temp.push(temperature);
+    state.chartData.humidity.push(humidity);
+    state.chartData.gas.push(gasLevel);
 }
 
 function updateChartsTimeRange(range) {
