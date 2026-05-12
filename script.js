@@ -37,7 +37,6 @@ const state = {
 document.addEventListener('DOMContentLoaded', () => {
     initializeApp();
     setupEventListeners();
-    loadSettings();
     startDataFetch();
     initializeCharts();
     setupHamburgerMenu();
@@ -60,8 +59,9 @@ function initializeApp() {
 // ============ EVENT LISTENERS ============
 function setupEventListeners() {
     // Hamburger menu
-    document.querySelector('.hamburger').addEventListener('click', toggleMobileMenu);
-    
+    const hamburger = document.querySelector('.hamburger');
+    if (hamburger) hamburger.addEventListener('click', toggleMobileMenu);
+
     // Filter buttons
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -80,15 +80,25 @@ function setupEventListeners() {
         });
     });
 
-    // Settings buttons
-    document.getElementById('saveSetting').addEventListener('click', saveSettings);
-    document.getElementById('resetSettings').addEventListener('click', resetSettings);
-    document.getElementById('testBuzzer').addEventListener('click', testBuzzer);
+    // Settings buttons — only attach if elements exist
+    const saveBtn = document.getElementById('saveSetting');
+    const resetBtn = document.getElementById('resetSettings');
+    const testBtn = document.getElementById('testBuzzer');
+    const dangerBtn = document.getElementById('testDangerTrigger');
+
+    if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+    if (resetBtn) resetBtn.addEventListener('click', resetSettings);
+    if (testBtn) testBtn.addEventListener('click', testBuzzer);
+    if (dangerBtn) dangerBtn.addEventListener('click', () => {
+        showNotification('🚨 Danger test triggered!');
+        triggerAlert('danger', 'DANGER: Manual test triggered from dashboard');
+    });
 
     // Nav links
     document.querySelectorAll('.nav-link').forEach(link => {
         link.addEventListener('click', () => {
-            document.querySelector('.nav-menu').classList.remove('active');
+            const menu = document.querySelector('.nav-menu');
+            if (menu) menu.classList.remove('active');
         });
     });
 }
@@ -673,39 +683,35 @@ function updateStatistics() {
 function loadSettings() {
     const saved = localStorage.getItem('helmetSettings');
     if (saved) {
-        const settings = JSON.parse(saved);
-        Object.assign(state.thresholds, settings.thresholds);
-        Object.assign(state.thinkSpeakConfig, settings.thinkSpeak);
+        try {
+            const settings = JSON.parse(saved);
+            if (settings.thresholds) Object.assign(state.thresholds, settings.thresholds);
+            if (settings.thinkSpeak) Object.assign(state.thinkSpeakConfig, settings.thinkSpeak);
+        } catch(e) { localStorage.removeItem('helmetSettings'); }
     }
 
-    // Populate form
-    document.getElementById('tempWarning').value = state.thresholds.tempWarning;
-    document.getElementById('tempDanger').value = state.thresholds.tempDanger;
-    document.getElementById('humidityWarning').value = state.thresholds.humidityWarning;
-    document.getElementById('humidityDanger').value = state.thresholds.humidityDanger;
-    document.getElementById('gasWarning').value = state.thresholds.gasWarning;
-    document.getElementById('gasDanger').value = state.thresholds.gasDanger;
-    document.getElementById('thinkSpeakChannelId').value = state.thinkSpeakConfig.channelId;
-    document.getElementById('updateInterval').value = state.thinkSpeakConfig.updateInterval;
+    // Populate form only if elements exist
+    const fields = ['tempWarning','tempDanger','humidityWarning','humidityDanger','gasWarning','gasDanger'];
+    fields.forEach(f => { const el = document.getElementById(f); if (el) el.value = state.thresholds[f]; });
+    const chEl = document.getElementById('thinkSpeakChannelId');
+    if (chEl) chEl.value = state.thinkSpeakConfig.channelId;
+    const intEl = document.getElementById('updateInterval');
+    if (intEl) intEl.value = state.thinkSpeakConfig.updateInterval;
 }
 
 function saveSettings() {
-    state.thresholds.tempWarning = parseFloat(document.getElementById('tempWarning').value);
-    state.thresholds.tempDanger = parseFloat(document.getElementById('tempDanger').value);
-    state.thresholds.humidityWarning = parseFloat(document.getElementById('humidityWarning').value);
-    state.thresholds.humidityDanger = parseFloat(document.getElementById('humidityDanger').value);
-    state.thresholds.gasWarning = parseFloat(document.getElementById('gasWarning').value);
-    state.thresholds.gasDanger = parseFloat(document.getElementById('gasDanger').value);
-    
-    state.thinkSpeakConfig.channelId = document.getElementById('thinkSpeakChannelId').value;
-    state.thinkSpeakConfig.updateInterval = parseInt(document.getElementById('updateInterval').value);
+    const fields = ['tempWarning','tempDanger','humidityWarning','humidityDanger','gasWarning','gasDanger'];
+    fields.forEach(f => { const el = document.getElementById(f); if (el) state.thresholds[f] = parseFloat(el.value); });
+    const chEl = document.getElementById('thinkSpeakChannelId');
+    if (chEl) state.thinkSpeakConfig.channelId = chEl.value;
+    const intEl = document.getElementById('updateInterval');
+    if (intEl) state.thinkSpeakConfig.updateInterval = parseInt(intEl.value);
 
     localStorage.setItem('helmetSettings', JSON.stringify({
         thresholds: state.thresholds,
         thinkSpeak: state.thinkSpeakConfig
     }));
-
-    showNotification('Settings saved successfully!');
+    showNotification('Settings saved!');
 }
 
 function resetSettings() {
@@ -714,12 +720,9 @@ function resetSettings() {
 }
 
 function loadThinkSpeakConfig() {
-    const channelId = document.getElementById('thinkSpeakChannelId').value;
-    if (channelId) {
-        state.thinkSpeakConfig.channelId = channelId;
-        const link = `https://thingspeak.com/channels/${channelId}`;
-        document.getElementById('thinkSpeakLink').innerHTML = `<a href="${link}" target="_blank">View Channel</a>`;
-    }
+    const link = `https://thingspeak.com/channels/${state.thinkSpeakConfig.channelId}`;
+    const el = document.getElementById('thinkSpeakLink');
+    if (el) el.innerHTML = `<a href="${link}" target="_blank">View Channel</a>`;
 }
 
 // ============ NOTIFICATIONS ============
