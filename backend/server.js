@@ -578,17 +578,17 @@ app.post('/api/alert/test', handleTestAlert);
 // Send buzzer command directly to ESP8266 HTTP server on local network
 async function triggerDeviceBuzzer(command = 'on') {
   const deviceIp = process.env.HELMET_DEVICE_IP;
-  if (!deviceIp) {
-    console.warn('⚠️  HELMET_DEVICE_IP not set in .env — cannot trigger physical buzzer');
-    return false;
-  }
+  if (!deviceIp) return false;
   try {
     const url = `http://${deviceIp}/buzzer/${command}`;
     const response = await axios.get(url, { timeout: 3000 });
-    console.log(`📡 Buzzer ${command.toUpperCase()} sent to device at ${deviceIp}:`, response.data);
+    console.log(`📡 Buzzer ${command.toUpperCase()} → device ${deviceIp}:`, response.data);
     return true;
   } catch (error) {
-    console.error(`❌ Device buzzer command failed (${deviceIp}):`, error.message);
+    // Silently skip if device is unreachable — firmware may not be uploaded yet
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`⚠️  Device buzzer unreachable (${deviceIp}) — upload new firmware to ESP8266`);
+    }
     return false;
   }
 }
@@ -609,6 +609,35 @@ async function writeThingSpeakCommand(field4Value) {
   }
 }
 
+app.post('/api/alerts/simulate', async (req, res) => {
+  try {
+    const level = String(req.body?.level || 'warning').toLowerCase();
+    const validLevels = ['warning', 'danger', 'normal'];
+    if (!validLevels.includes(level)) {
+      return res.status(400).json({ error: 'level must be warning, danger, or normal' });
+    }
+
+    const readings = {
+      warning: { temperature: THRESHOLDS.tempWarning + 2, humidity: THRESHOLDS.humidityWarning + 2, gasLevel: THRESHOLDS.gasWarning + 50 },
+      danger:  { temperature: THRESHOLDS.tempDanger  + 5, humidity: THRESHOLDS.humidityDanger  + 5, gasLevel: THRESHOLDS.gasDanger  + 100 },
+      normal:  { temperature: 28, humidity: 52, gasLevel: 120 }
+    };
+
+    const reading = assessReading({ ...readings[level], deviceStatus: level === 'danger' ? 2 : level === 'warning' ? 1 : 0, timestamp: new Date().toISOString() });
+
+    // Force status change so email fires
+    appState.previousStatus = level === 'normal' ? 'danger' : 'normal';
+    appState.lastWarningEmailAt = 0;
+    appState.lastDangerEmailAt  = 0;
+
+    await evaluateAlertPolicy(reading);
+
+    return res.json({ success: true, message: `Simulated ${level} — email sent`, reading });
+  } catch (error) {
+    return res.status(500).json({ error: 'Simulation failed', detail: error.message });
+  }
+});
+
 app.post('/api/alerts/trigger-danger', async (req, res) => {
   try {
     const dangerReading = {
@@ -619,20 +648,25 @@ app.post('/api/alerts/trigger-danger', async (req, res) => {
       timestamp: new Date().toISOString()
     };
     const reading = assessReading(dangerReading);
+
+    // Update state so evaluateAlertPolicy sees a real status change next poll
     appState.currentReading = reading;
     appState.currentStatus = 'danger';
+    appState.previousStatus = 'danger';
+    // Reset danger cooldown so next real danger also fires immediately
+    appState.lastDangerEmailAt = 0;
 
-    // Trigger physical buzzer directly on ESP8266 via HTTP
+    // Trigger physical buzzer
     await triggerDeviceBuzzer('on');
 
+    // Send danger email immediately
     await sendEmail(
-      'danger',
-      reading,
+      'danger', reading,
       '🚨 Smart Helmet - DANGER TRIGGER TEST',
-      `Manual danger trigger test activated from dashboard.\n\nTemperature: ${reading.temperature.toFixed(1)} °C 🔴\nHumidity: ${reading.humidity.toFixed(1)} % 🔴\nGas Level: ${reading.gasLevel.toFixed(1)} ppm 🔴\nRisk Score: ${reading.riskScore}/100\n\nThis is a TEST ALERT triggered from the dashboard.`
+      `🚨 Manual danger trigger test activated from dashboard.\n\nTemperature: ${reading.temperature.toFixed(1)} °C 🔴\nHumidity: ${reading.humidity.toFixed(1)} % 🔴\nGas Level: ${reading.gasLevel.toFixed(1)} ppm 🔴\nRisk Score: ${reading.riskScore}/100\n\nThis is a TEST ALERT triggered from the dashboard.`
     );
 
-    addAlertRecord({ type: 'test', level: 'danger', status: 'triggered', message: 'Danger trigger — buzzer command sent to device + email sent', reading });
+    addAlertRecord({ type: 'test', level: 'danger', status: 'triggered', message: 'Danger trigger — buzzer + email sent', reading });
     return res.json({ success: true, message: 'Danger test triggered: buzzer command sent to helmet + email sent', reading });
   } catch (error) {
     return res.status(500).json({ error: 'Failed to trigger danger test', detail: error.message });
