@@ -31,13 +31,16 @@ const unsigned long  TS_CHANNEL   = 3376690;
 #define BUZZER_PIN  D8
 #define LED_PIN     D0
 
-// -------- Thresholds --------
-#define TEMP_WARN   35.0f
-#define TEMP_DANGER 40.0f
-#define HUM_WARN    70.0f
-#define HUM_DANGER  80.0f
-#define GAS_WARN    300.0f
-#define GAS_DANGER  400.0f
+// -------- Thresholds — LOW FOR TESTING --------
+// Current readings: Temp ~32°C, Hum ~58%, Gas ~78ppm
+// Raise these to real values after testing:
+//   Real: TEMP_WARN=35, TEMP_DANGER=40, GAS_WARN=300, GAS_DANGER=400
+#define TEMP_WARN   33.0f
+#define TEMP_DANGER 34.0f
+#define HUM_WARN    59.0f
+#define HUM_DANGER  61.0f
+#define GAS_WARN    82.0f
+#define GAS_DANGER  90.0f
 
 // -------- Timing --------
 #define UPLOAD_MS   15000UL   // ThingSpeak upload every 15s (free tier min)

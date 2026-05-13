@@ -15,20 +15,20 @@ const THINGSPEAK_READ_KEY = process.env.THINGSPEAK_API_KEY || '8JKU7MB5273R0GQQ'
 const THINGSPEAK_WRITE_KEY = process.env.THINGSPEAK_WRITE_API || 'WC8DXJQE1JQM3WYO';
 
 const THRESHOLDS = {
-  tempWarning:      Number(process.env.TEMP_WARNING      || 35),
-  tempDanger:       Number(process.env.TEMP_DANGER       || 40),   // 40°C = danger
-  humidityWarning:  Number(process.env.HUMIDITY_WARNING  || 70),
-  humidityDanger:   Number(process.env.HUMIDITY_DANGER   || 80),
-  gasWarning:       Number(process.env.GAS_WARNING       || 300),
-  gasDanger:        Number(process.env.GAS_DANGER        || 400)   // 400ppm = danger
+  tempWarning:      Number(process.env.TEMP_WARNING      || 33),   // just above current ~32°C
+  tempDanger:       Number(process.env.TEMP_DANGER       || 34),
+  humidityWarning:  Number(process.env.HUMIDITY_WARNING  || 59),   // just above current ~58%
+  humidityDanger:   Number(process.env.HUMIDITY_DANGER   || 61),
+  gasWarning:       Number(process.env.GAS_WARNING       || 82),   // just above current ~78ppm
+  gasDanger:        Number(process.env.GAS_DANGER        || 90)
 };
 
 const EMAIL_INTERVAL = Math.max(1, Number(process.env.EMAIL_INTERVAL_HOURS || 1)) * 60 * 60 * 1000;
 const ALERT_EMAIL_ADDRESS = process.env.ALERT_EMAIL_ADDRESS || process.env.EMAIL_USER || '';
-const ALERT_COOLDOWN = 30 * 1000;   // 30 seconds between repeated warning/danger emails
-const POLL_INTERVAL = 5 * 1000;     // poll ThingSpeak every 5 seconds
-const CACHE_TTL = 4 * 1000;         // cache for 4 seconds
-const MAX_ALERTS = 200;
+const ALERT_COOLDOWN = 60 * 1000;  // 60s between repeat emails for same condition
+const POLL_INTERVAL  = 5 * 1000;   // poll ThingSpeak every 5s
+const CACHE_TTL      = 4 * 1000;
+const MAX_ALERTS     = 200;
 
 // Only create transporter if credentials look real (not placeholders)
 const emailUser = process.env.EMAIL_USER || '';
