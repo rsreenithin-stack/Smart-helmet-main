@@ -15,12 +15,12 @@ const THINGSPEAK_READ_KEY = process.env.THINGSPEAK_API_KEY || '8JKU7MB5273R0GQQ'
 const THINGSPEAK_WRITE_KEY = process.env.THINGSPEAK_WRITE_API || 'WC8DXJQE1JQM3WYO';
 
 const THRESHOLDS = {
-  tempWarning: Number(process.env.TEMP_WARNING || 35),
-  tempDanger: Number(process.env.TEMP_DANGER || 45),
-  humidityWarning: Number(process.env.HUMIDITY_WARNING || 70),
-  humidityDanger: Number(process.env.HUMIDITY_DANGER || 80),
-  gasWarning: Number(process.env.GAS_WARNING || 300),
-  gasDanger: Number(process.env.GAS_DANGER || 600)
+  tempWarning:      Number(process.env.TEMP_WARNING      || 35),
+  tempDanger:       Number(process.env.TEMP_DANGER       || 40),   // 40°C = danger
+  humidityWarning:  Number(process.env.HUMIDITY_WARNING  || 70),
+  humidityDanger:   Number(process.env.HUMIDITY_DANGER   || 80),
+  gasWarning:       Number(process.env.GAS_WARNING       || 300),
+  gasDanger:        Number(process.env.GAS_DANGER        || 400)   // 400ppm = danger
 };
 
 const EMAIL_INTERVAL = Math.max(1, Number(process.env.EMAIL_INTERVAL_HOURS || 1)) * 60 * 60 * 1000;

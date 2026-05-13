@@ -1,91 +1,95 @@
-// Smart Mining Helmet - ESP8266 Firmware
-// - Reads DHT11 + MQ-2, posts to ThingSpeak every 15s
-// - Runs a tiny HTTP server so the dashboard can trigger the buzzer directly
-// - Polls ThingSpeak field4 as fallback command channel
+// ============================================================
+// Smart Mining Helmet - ESP8266 Firmware v2.0
+// Sensors : DHT11 (Temp/Humidity) + MQ-2 (Gas)
+// Actuator: Active Buzzer on D8
+// Cloud   : ThingSpeak (channel 3376690)
+// HTTP    : Built-in web server for remote buzzer control
+//
+// Thresholds (matching project spec):
+//   Temperature : Warning >35°C  | Danger >40°C
+//   Humidity    : Warning >70%   | Danger >80%
+//   Gas (MQ-2)  : Warning >300ppm| Danger >400ppm
+// ============================================================
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
-#include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <DHT.h>
 
-// -------- User config — replace before uploading --------
-const char* ssid     = "YOUR_SSID";
-const char* password = "YOUR_PASS";
+// -------- WiFi credentials — CHANGE THESE --------
+const char* WIFI_SSID = "YOUR_SSID";
+const char* WIFI_PASS = "YOUR_PASS";
 
-// ThingSpeak
-const char* tsHost      = "api.thingspeak.com";
-const char* writeApiKey = "WC8DXJQE1JQM3WYO";
-const char* readApiKey  = "8JKU7MB5273R0GQQ";
-const unsigned long channelId = 3376690;
+// -------- ThingSpeak --------
+const char*          TS_HOST      = "api.thingspeak.com";
+const char*          TS_WRITE_KEY = "WC8DXJQE1JQM3WYO";
+const unsigned long  TS_CHANNEL   = 3376690;
 
 // -------- Hardware pins --------
-#define DHTPIN      D4
-#define DHTTYPE     DHT11
+#define DHT_PIN     D4
+#define DHT_TYPE    DHT11
 #define MQ2_PIN     A0
 #define BUZZER_PIN  D8
 #define LED_PIN     D0
 
-// -------- Timing --------
-const unsigned long UPLOAD_INTERVAL  = 15000UL;
-const unsigned long BUZZER_DURATION  = 5000UL;
-
 // -------- Thresholds --------
-const float TEMP_WARNING     = 35.0;
-const float TEMP_DANGER      = 45.0;
-const float HUMIDITY_WARNING = 70.0;
-const float HUMIDITY_DANGER  = 80.0;
-const float GAS_WARNING      = 300.0;
-const float GAS_DANGER       = 600.0;
+#define TEMP_WARN   35.0f
+#define TEMP_DANGER 40.0f
+#define HUM_WARN    70.0f
+#define HUM_DANGER  80.0f
+#define GAS_WARN    300.0f
+#define GAS_DANGER  400.0f
+
+// -------- Timing --------
+#define UPLOAD_MS   15000UL   // ThingSpeak upload every 15s (free tier min)
+#define BUZZ_MS     5000UL    // Buzzer auto-off after 5s (remote trigger)
+
+// -------- Objects --------
+DHT              dht(DHT_PIN, DHT_TYPE);
+WiFiClient       tsClient;
+ESP8266WebServer httpServer(80);
 
 // -------- State --------
-DHT dht(DHTPIN, DHTTYPE);
-WiFiClient client;
-ESP8266WebServer server(80);   // HTTP server on port 80
-
 unsigned long lastUpload  = 0;
 unsigned long buzzerOnAt  = 0;
-bool buzzerActive         = false;
+bool          buzzerOn    = false;
+int           alertLevel  = 0;   // 0=normal 1=warning 2=danger
 
 // ============================================================
-// HTTP endpoints — called by the backend on local network
+// HTTP handlers — called by backend on local network
 // ============================================================
-void handleBuzzerOn() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "application/json", "{\"status\":\"buzzer_on\"}");
-  startBuzzer(BUZZER_DURATION);
-  Serial.println("🔔 Remote buzzer ON command received");
+void onBuzzerOn() {
+  httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+  httpServer.send(200, "application/json", "{\"buzzer\":\"on\"}");
+  buzzerTrigger(BUZZ_MS);
+  Serial.println("[HTTP] Buzzer ON command received");
 }
 
-void handleBuzzerOff() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  server.send(200, "application/json", "{\"status\":\"buzzer_off\"}");
-  stopBuzzer();
-  Serial.println("🔕 Remote buzzer OFF command received");
+void onBuzzerOff() {
+  httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+  httpServer.send(200, "application/json", "{\"buzzer\":\"off\"}");
+  buzzerStop();
+  Serial.println("[HTTP] Buzzer OFF command received");
 }
 
-void handleStatus() {
-  server.sendHeader("Access-Control-Allow-Origin", "*");
-  float temp = dht.readTemperature();
-  float hum  = dht.readHumidity();
-  int   raw  = analogRead(MQ2_PIN);
-  float gas  = map(raw, 0, 1023, 0, 1000);
-  String json = "{\"temperature\":" + String(temp, 1) +
-                ",\"humidity\":"    + String(hum, 1)  +
-                ",\"gasLevel\":"    + String(gas, 0)  +
-                ",\"buzzer\":"      + String(buzzerActive ? "true" : "false") + "}";
-  server.send(200, "application/json", json);
-}
-
-void handleNotFound() {
-  server.send(404, "text/plain", "Not found");
+void onStatus() {
+  httpServer.sendHeader("Access-Control-Allow-Origin", "*");
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
+  float g = map(analogRead(MQ2_PIN), 0, 1023, 0, 1000);
+  String json = "{\"temperature\":" + String(t, 1) +
+                ",\"humidity\":"    + String(h, 1) +
+                ",\"gasLevel\":"    + String(g, 0) +
+                ",\"alertLevel\":"  + String(alertLevel) +
+                ",\"buzzer\":"      + (buzzerOn ? "true" : "false") + "}";
+  httpServer.send(200, "application/json", json);
 }
 
 // ============================================================
 void setup() {
   Serial.begin(115200);
   delay(100);
+  Serial.println("\n\n=== Smart Mining Helmet v2.0 ===");
 
-  pinMode(MQ2_PIN,    INPUT);
   pinMode(BUZZER_PIN, OUTPUT);
   pinMode(LED_PIN,    OUTPUT);
   digitalWrite(BUZZER_PIN, LOW);
@@ -95,137 +99,185 @@ void setup() {
   connectWiFi();
 
   // Register HTTP routes
-  server.on("/buzzer/on",  HTTP_GET, handleBuzzerOn);
-  server.on("/buzzer/off", HTTP_GET, handleBuzzerOff);
-  server.on("/status",     HTTP_GET, handleStatus);
-  server.onNotFound(handleNotFound);
-  server.begin();
-  Serial.println("🌐 HTTP server started on port 80");
-  Serial.print("📍 Device IP: ");
+  httpServer.on("/buzzer/on",  HTTP_GET, onBuzzerOn);
+  httpServer.on("/buzzer/off", HTTP_GET, onBuzzerOff);
+  httpServer.on("/status",     HTTP_GET, onStatus);
+  httpServer.begin();
+
+  Serial.println("[HTTP] Server started on port 80");
+  Serial.print("[NET]  Device IP: ");
   Serial.println(WiFi.localIP());
 
-  // Startup beep
-  beep(150); delay(100); beep(150);
+  // Startup confirmation beep
+  beepPattern(2, 150, 100);
 }
 
 // ============================================================
 void loop() {
-  server.handleClient();   // handle incoming HTTP requests
+  httpServer.handleClient();
 
-  if (WiFi.status() != WL_CONNECTED) connectWiFi();
-
-  unsigned long now = millis();
-
-  // ── Upload sensor data every 15s ────────────────────────
-  if (now - lastUpload >= UPLOAD_INTERVAL) {
-    lastUpload = now;
-
-    float temp = dht.readTemperature();
-    float hum  = dht.readHumidity();
-    int   raw  = analogRead(MQ2_PIN);
-    float gas  = map(raw, 0, 1023, 0, 1000);
-
-    if (isnan(temp) || isnan(hum)) {
-      Serial.println("⚠️  DHT read failed");
-      blinkLED(3);
-    } else {
-      int alertLevel = 0;
-      if (temp >= TEMP_DANGER || hum >= HUMIDITY_DANGER || gas >= GAS_DANGER) {
-        alertLevel = 2;
-      } else if (temp >= TEMP_WARNING || hum >= HUMIDITY_WARNING || gas >= GAS_WARNING) {
-        alertLevel = 1;
-      }
-
-      Serial.printf("T:%.1f°C  H:%.1f%%  Gas:%.0fppm  Level:%d\n", temp, hum, gas, alertLevel);
-      uploadToThingSpeak(temp, hum, gas, alertLevel);
-
-      // Auto-buzz based on sensor readings
-      if (alertLevel == 2 && !buzzerActive) {
-        startBuzzer(BUZZER_DURATION);
-      } else if (alertLevel == 1 && !buzzerActive) {
-        beep(300); delay(500); beep(300);
-      } else if (alertLevel == 0) {
-        stopBuzzer();
-      }
-    }
+  // Reconnect WiFi if dropped
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[WiFi] Reconnecting...");
+    connectWiFi();
   }
 
-  // ── Auto-stop buzzer after duration ─────────────────────
-  if (buzzerActive && (millis() - buzzerOnAt >= BUZZER_DURATION)) {
-    stopBuzzer();
+  // Auto-stop buzzer after duration (for remote triggers)
+  if (buzzerOn && alertLevel == 0 && (millis() - buzzerOnAt >= BUZZ_MS)) {
+    buzzerStop();
+  }
+
+  // Upload sensor data on interval
+  if (millis() - lastUpload >= UPLOAD_MS) {
+    lastUpload = millis();
+    readAndUpload();
   }
 
   delay(10);
 }
 
 // ============================================================
-void beep(int durationMs) {
-  digitalWrite(BUZZER_PIN, HIGH);
-  delay(durationMs);
-  digitalWrite(BUZZER_PIN, LOW);
-}
+// Read sensors, determine alert level, control buzzer, upload
+// ============================================================
+void readAndUpload() {
+  float temp = dht.readTemperature();
+  float hum  = dht.readHumidity();
+  int   raw  = analogRead(MQ2_PIN);
+  float gas  = (float)map(raw, 0, 1023, 0, 1000);
 
-void startBuzzer(unsigned long durationMs) {
-  buzzerActive = true;
-  buzzerOnAt   = millis();
-  digitalWrite(BUZZER_PIN, HIGH);
-  digitalWrite(LED_PIN,    HIGH);
-  Serial.println("🔔 BUZZER ON");
-}
-
-void stopBuzzer() {
-  if (buzzerActive) {
-    buzzerActive = false;
-    digitalWrite(BUZZER_PIN, LOW);
-    digitalWrite(LED_PIN,    LOW);
-    Serial.println("🔕 BUZZER OFF");
+  // Validate DHT reading
+  if (isnan(temp) || isnan(hum)) {
+    Serial.println("[DHT]  Read failed — check wiring & 10kΩ pull-up on D4");
+    blinkLED(3);
+    // Still upload gas reading with 0 for temp/hum
+    temp = 0.0f;
+    hum  = 0.0f;
   }
+
+  // ── Determine alert level ──────────────────────────────
+  int newLevel = 0;
+  String reason = "";
+
+  if (temp >= TEMP_DANGER || hum >= HUM_DANGER || gas >= GAS_DANGER) {
+    newLevel = 2;
+    if (temp >= TEMP_DANGER) reason = "TEMP " + String(temp, 1) + "°C >= " + String(TEMP_DANGER, 0) + "°C";
+    else if (gas >= GAS_DANGER) reason = "GAS "  + String(gas, 0)  + "ppm >= " + String(GAS_DANGER, 0) + "ppm";
+    else reason = "HUMIDITY " + String(hum, 1) + "% >= " + String(HUM_DANGER, 0) + "%";
+  } else if (temp >= TEMP_WARN || hum >= HUM_WARN || gas >= GAS_WARN) {
+    newLevel = 1;
+    if (temp >= TEMP_WARN) reason = "TEMP " + String(temp, 1) + "°C >= " + String(TEMP_WARN, 0) + "°C";
+    else if (gas >= GAS_WARN) reason = "GAS "  + String(gas, 0)  + "ppm >= " + String(GAS_WARN, 0) + "ppm";
+    else reason = "HUMIDITY " + String(hum, 1) + "% >= " + String(HUM_WARN, 0) + "%";
+  }
+
+  // ── Log to Serial ──────────────────────────────────────
+  Serial.printf("[DATA] T:%.1f°C  H:%.1f%%  Gas:%.0fppm  Level:%d\n",
+                temp, hum, gas, newLevel);
+  if (newLevel > 0) Serial.println("[ALERT] " + reason);
+
+  // ── Control buzzer based on alert level ───────────────
+  if (newLevel == 2) {
+    // DANGER: continuous buzzer until resolved
+    if (!buzzerOn) {
+      Serial.println("[BUZZ] DANGER — continuous buzzer ON");
+      digitalWrite(BUZZER_PIN, HIGH);
+      digitalWrite(LED_PIN,    HIGH);
+      buzzerOn   = true;
+      buzzerOnAt = millis();
+    }
+  } else if (newLevel == 1) {
+    // WARNING: double beep every upload cycle
+    Serial.println("[BUZZ] WARNING — double beep");
+    beepPattern(2, 200, 200);
+  } else {
+    // NORMAL: stop buzzer if it was on from sensor reading
+    if (buzzerOn && alertLevel > 0) {
+      buzzerStop();
+    }
+  }
+
+  alertLevel = newLevel;
+
+  // ── Upload to ThingSpeak ───────────────────────────────
+  uploadThingSpeak(temp, hum, gas, newLevel);
 }
 
-void uploadToThingSpeak(float temperature, float humidity, float gasLevel, int alertLevel) {
-  if (!client.connect(tsHost, 80)) {
-    Serial.println("ThingSpeak connect failed");
+// ============================================================
+void uploadThingSpeak(float temp, float hum, float gas, int level) {
+  if (!tsClient.connect(TS_HOST, 80)) {
+    Serial.println("[TS]   Connection failed");
     return;
   }
 
-  String url = "/update?api_key=" + String(writeApiKey);
-  url += "&field1=" + String(temperature, 2);
-  url += "&field2=" + String(humidity, 2);
-  url += "&field3=" + String(gasLevel, 0);
-  url += "&field4=" + String(alertLevel);
+  String url = "/update?api_key=" + String(TS_WRITE_KEY);
+  url += "&field1=" + String(temp, 2);
+  url += "&field2=" + String(hum,  2);
+  url += "&field3=" + String(gas,  0);
+  url += "&field4=" + String(level);
 
-  client.print("GET " + url + " HTTP/1.1\r\nHost: " + String(tsHost) + "\r\nConnection: close\r\n\r\n");
+  tsClient.print("GET " + url + " HTTP/1.1\r\nHost: " +
+                 String(TS_HOST) + "\r\nConnection: close\r\n\r\n");
 
-  unsigned long timeout = millis();
-  while (client.available() == 0 && millis() - timeout < 5000) delay(10);
-  while (client.available()) client.readStringUntil('\n');
-  client.stop();
-  Serial.println("✅ ThingSpeak updated");
+  unsigned long t = millis();
+  while (!tsClient.available() && millis() - t < 5000) delay(10);
+
+  String resp = "";
+  while (tsClient.available()) resp = tsClient.readStringUntil('\n');
+  tsClient.stop();
+
+  Serial.println("[TS]   Entry ID: " + resp.trim());
 }
 
-void connectWiFi() {
-  Serial.printf("Connecting to %s", ssid);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
+// ============================================================
+void buzzerTrigger(unsigned long durationMs) {
+  buzzerOn   = true;
+  buzzerOnAt = millis();
+  digitalWrite(BUZZER_PIN, HIGH);
+  digitalWrite(LED_PIN,    HIGH);
+}
 
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000UL) {
-    delay(500); Serial.print('.');
-  }
-  Serial.println();
+void buzzerStop() {
+  buzzerOn = false;
+  digitalWrite(BUZZER_PIN, LOW);
+  digitalWrite(LED_PIN,    LOW);
+  Serial.println("[BUZZ] OFF");
+}
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("✅ WiFi connected, IP: ");
-    Serial.println(WiFi.localIP());
-    blinkLED(2);
-  } else {
-    Serial.println("❌ WiFi failed");
+void beepPattern(int count, int onMs, int offMs) {
+  for (int i = 0; i < count; i++) {
+    digitalWrite(BUZZER_PIN, HIGH);
+    delay(onMs);
+    digitalWrite(BUZZER_PIN, LOW);
+    if (i < count - 1) delay(offMs);
   }
 }
 
 void blinkLED(int times) {
   for (int i = 0; i < times; i++) {
-    digitalWrite(LED_PIN, HIGH); delay(150);
-    digitalWrite(LED_PIN, LOW);  delay(150);
+    digitalWrite(LED_PIN, HIGH); delay(120);
+    digitalWrite(LED_PIN, LOW);  delay(120);
+  }
+}
+
+// ============================================================
+void connectWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.printf("[WiFi] Connecting to %s", WIFI_SSID);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000UL) {
+    delay(500);
+    Serial.print('.');
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("[WiFi] Connected! IP: ");
+    Serial.println(WiFi.localIP());
+    blinkLED(3);
+  } else {
+    Serial.println("[WiFi] FAILED — check SSID/password");
+    blinkLED(6);
   }
 }

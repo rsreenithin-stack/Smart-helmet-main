@@ -9,9 +9,12 @@ const state = {
     deviceId: 'ESP-CCE1E1',
     sensors: { temperature: 0, humidity: 0, gasLevel: 0 },
     thresholds: {
-        tempWarning: 35,    tempDanger: 45,
-        humidityWarning: 70, humidityDanger: 80,
-        gasWarning: 300,    gasDanger: 600
+        tempWarning: 35,
+        tempDanger: 40,
+        humidityWarning: 70,
+        humidityDanger: 80,
+        gasWarning: 300,
+        gasDanger: 400
     },
     thinkSpeakConfig: {
         channelId: THINGSPEAK_CHANNEL_ID,
