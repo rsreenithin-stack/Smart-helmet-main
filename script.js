@@ -150,18 +150,38 @@ async function fetchThinkSpeakData() {
         const data = await response.json();
 
         if (!data.feeds || data.feeds.length === 0) {
-            updateConnectionStatus(false);
+            updateConnectionStatus(false, 'Disconnected');
             return;
         }
 
         const feed = data.feeds[data.feeds.length - 1];
+
+        // ── Check data freshness — device must have sent data within 2 minutes ──
+        const feedTime = feed.created_at ? new Date(feed.created_at) : null;
+        const ageMs    = feedTime ? (Date.now() - feedTime.getTime()) : Infinity;
+        const OFFLINE_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
+        if (ageMs > OFFLINE_THRESHOLD_MS) {
+            // Data is stale — device is offline, no power or not connected
+            const ageMin = Math.round(ageMs / 60000);
+            updateConnectionStatus(false, `Device Offline (${ageMin}m ago)`);
+            document.getElementById('lastUpdate').textContent = `Last seen: ${feedTime ? feedTime.toLocaleTimeString() : 'unknown'}`;
+            // Clear sensor displays to show device is not active
+            document.getElementById('tempValue').textContent    = '--°C';
+            document.getElementById('humidityValue').textContent = '--%';
+            document.getElementById('gasValue').textContent     = '-- ppm';
+            hidealertBanner();
+            stopAlarm();
+            return;
+        }
+
         const temperature = parseFloat(feed.field1);
         const humidity    = parseFloat(feed.field2);
         const gasLevel    = parseFloat(feed.field3);
 
         // If all fields are missing/NaN the device hasn't sent real data
         if (isNaN(temperature) && isNaN(humidity) && isNaN(gasLevel)) {
-            updateConnectionStatus(false);
+            updateConnectionStatus(false, 'No Sensor Data');
             return;
         }
 
@@ -179,7 +199,7 @@ async function fetchThinkSpeakData() {
 
     } catch (error) {
         console.error('Error fetching ThingSpeak data:', error);
-        updateConnectionStatus(false);
+        updateConnectionStatus(false, 'Disconnected');
     }
 }
 
