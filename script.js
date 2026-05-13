@@ -11,8 +11,8 @@ const state = {
     thresholds: {
         tempWarning: 33,
         tempDanger: 34,
-        humidityWarning: 59,
-        humidityDanger: 61,
+        humidityWarning: 63,
+        humidityDanger: 65,
         gasWarning: 82,
         gasDanger: 90
     },

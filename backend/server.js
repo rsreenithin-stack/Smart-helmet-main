@@ -17,16 +17,16 @@ const THINGSPEAK_WRITE_KEY = process.env.THINGSPEAK_WRITE_API || 'WC8DXJQE1JQM3W
 const THRESHOLDS = {
   tempWarning:      Number(process.env.TEMP_WARNING      || 33),   // just above current ~32°C
   tempDanger:       Number(process.env.TEMP_DANGER       || 34),
-  humidityWarning:  Number(process.env.HUMIDITY_WARNING  || 59),   // just above current ~58%
-  humidityDanger:   Number(process.env.HUMIDITY_DANGER   || 61),
+  humidityWarning:  Number(process.env.HUMIDITY_WARNING  || 63),   // raised — current ~62%
+  humidityDanger:   Number(process.env.HUMIDITY_DANGER   || 65),
   gasWarning:       Number(process.env.GAS_WARNING       || 82),   // just above current ~78ppm
   gasDanger:        Number(process.env.GAS_DANGER        || 90)
 };
 
 const EMAIL_INTERVAL = Math.max(1, Number(process.env.EMAIL_INTERVAL_HOURS || 1)) * 60 * 60 * 1000;
 const ALERT_EMAIL_ADDRESS = process.env.ALERT_EMAIL_ADDRESS || process.env.EMAIL_USER || '';
-const ALERT_COOLDOWN = 60 * 1000;  // 60s between repeat emails for same condition
-const POLL_INTERVAL  = 5 * 1000;   // poll ThingSpeak every 5s
+const ALERT_COOLDOWN = 10 * 60 * 1000;  // 10 minutes between repeat emails for same condition
+const POLL_INTERVAL  = 5 * 1000;
 const CACHE_TTL      = 4 * 1000;
 const MAX_ALERTS     = 200;
 
@@ -54,16 +54,17 @@ const emailTransporter = emailReady
 const appState = {
   currentReading: null,
   currentStatus: 'normal',
-  previousStatus: 'normal',
+  previousStatus: null,          // null = first poll, don't treat as "changed"
   lastFetchedAt: 0,
-  lastNormalEmailAt: 0,          // 0 = send first normal email immediately on startup
+  lastNormalEmailAt: 0,
   lastWarningEmailAt: 0,
   lastDangerEmailAt: 0,
   latestSignature: '',
   pollFailures: 0,
   alertHistory: [],
   lastError: null,
-  isFallbackData: false
+  isFallbackData: false,
+  startupEmailSent: false        // track if startup email was sent
 };
 
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -322,29 +323,48 @@ async function refreshLatestReading(force = false) {
 
 async function evaluateAlertPolicy(reading) {
   const now = Date.now();
+
+  // First poll after startup — establish baseline, send startup email, no alert emails yet
+  if (appState.previousStatus === null) {
+    appState.previousStatus = reading.overallStatus;
+
+    // Send startup email only once
+    if (!appState.startupEmailSent) {
+      appState.startupEmailSent = true;
+      try {
+        await sendEmail(
+          'normal', reading,
+          'Smart Helmet - System Online ✅',
+          `✅ Smart Helmet system is now ONLINE and monitoring.\n\nCurrent readings:\nTemperature: ${reading.temperature.toFixed(1)} °C\nHumidity: ${reading.humidity.toFixed(1)} %\nGas Level: ${reading.gasLevel.toFixed(1)} ppm\nStatus: ${reading.statusText}\n\nAlert thresholds:\nTemp Warning: >${THRESHOLDS.tempWarning}°C | Danger: >${THRESHOLDS.tempDanger}°C\nGas Warning: >${THRESHOLDS.gasWarning}ppm | Danger: >${THRESHOLDS.gasDanger}ppm\nHumidity Warning: >${THRESHOLDS.humidityWarning}% | Danger: >${THRESHOLDS.humidityDanger}%`
+        );
+        appState.lastNormalEmailAt = now;
+        console.log('📧 Startup email sent');
+      } catch (err) {
+        console.error('❌ Startup email failed:', err.message);
+      }
+    }
+    return;
+  }
+
   const statusChanged = reading.overallStatus !== appState.previousStatus;
   appState.previousStatus = reading.overallStatus;
 
   // ── NORMAL ──────────────────────────────────────────────────────────────
   if (reading.overallStatus === 'normal') {
-    // Reset buzzer command on device when returning to normal
     if (statusChanged) await triggerDeviceBuzzer('off');
 
-    // Hourly status report — also fires immediately on first startup
+    // Hourly status report
     if (now - appState.lastNormalEmailAt >= EMAIL_INTERVAL) {
-      const isFirst = appState.lastNormalEmailAt === 0;
       try {
         await sendEmail(
           'normal', reading,
-          isFirst ? 'Smart Helmet - System Online ✅' : 'Smart Helmet - Hourly Status Report',
-          `${isFirst ? '✅ Smart Helmet system is now ONLINE and monitoring.\n\n' : ''}The helmet is operating normally.\n\nTemperature: ${reading.temperature.toFixed(1)} °C ✅\nHumidity: ${reading.humidity.toFixed(1)} % ✅\nGas Level: ${reading.gasLevel.toFixed(1)} ppm ✅\nRisk Score: ${reading.riskScore}/100\n\nNext status report in 1 hour.`
+          'Smart Helmet - Hourly Status Report ✅',
+          `The helmet is operating normally.\n\nTemperature: ${reading.temperature.toFixed(1)} °C ✅\nHumidity: ${reading.humidity.toFixed(1)} % ✅\nGas Level: ${reading.gasLevel.toFixed(1)} ppm ✅\nRisk Score: ${reading.riskScore}/100\n\nNext report in 1 hour.`
         );
         appState.lastNormalEmailAt = now;
-        const nextAt = new Date(now + EMAIL_INTERVAL).toLocaleTimeString();
-        console.log(`📧 Normal status email sent. Next hourly report at ${nextAt}`);
-      } catch (error) {
-        console.error('❌ Hourly email failed:', error.message);
-        addAlertRecord({ type: 'email', level: 'normal', status: 'failed', message: error.message, reading });
+        console.log(`📧 Hourly report sent. Next at ${new Date(now + EMAIL_INTERVAL).toLocaleTimeString()}`);
+      } catch (err) {
+        console.error('❌ Hourly email failed:', err.message);
       }
     }
     return;
@@ -354,18 +374,19 @@ async function evaluateAlertPolicy(reading) {
   if (reading.overallStatus === 'warning') {
     if (statusChanged) await triggerDeviceBuzzer('on');
 
+    // Send email: immediately on first detection, then every ALERT_COOLDOWN
     const shouldSend = statusChanged || (now - appState.lastWarningEmailAt >= ALERT_COOLDOWN);
     if (shouldSend) {
       try {
         await sendEmail(
           'warning', reading,
           '⚠️ Smart Helmet - WARNING ALERT',
-          `⚠️ WARNING condition detected on your Smart Mining Helmet!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempWarning ? '🔴 HIGH' : '✅'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityWarning ? '🔴 HIGH' : '✅'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasWarning ? '🔴 HIGH' : '✅'}\nRisk Score: ${reading.riskScore}/100\n\nPlease check the helmet immediately.`
+          `⚠️ WARNING condition detected!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempWarning ? '🔴 HIGH' : '✅'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityWarning ? '🔴 HIGH' : '✅'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasWarning ? '🔴 HIGH' : '✅'}\nRisk Score: ${reading.riskScore}/100\n\nPlease check the helmet immediately.`
         );
         appState.lastWarningEmailAt = now;
-      } catch (error) {
-        console.error('❌ Warning email failed:', error.message);
-        addAlertRecord({ type: 'email', level: 'warning', status: 'failed', message: error.message, reading });
+      } catch (err) {
+        console.error('❌ Warning email failed:', err.message);
+        addAlertRecord({ type: 'email', level: 'warning', status: 'failed', message: err.message, reading });
       }
     }
     return;
@@ -380,12 +401,12 @@ async function evaluateAlertPolicy(reading) {
       await sendEmail(
         'danger', reading,
         '🚨 Smart Helmet - DANGER ALERT',
-        `🚨 CRITICAL DANGER detected on your Smart Mining Helmet!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempDanger ? '🔴 DANGER' : '⚠️'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityDanger ? '🔴 DANGER' : '⚠️'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasDanger ? '🔴 DANGER' : '⚠️'}\nRisk Score: ${reading.riskScore}/100\n\n⚠️ IMMEDIATE EVACUATION MAY BE REQUIRED!`
+        `🚨 CRITICAL DANGER detected!\n\nTemperature: ${reading.temperature.toFixed(1)} °C  ${reading.temperature >= THRESHOLDS.tempDanger ? '🔴 DANGER' : '⚠️'}\nHumidity: ${reading.humidity.toFixed(1)} %  ${reading.humidity >= THRESHOLDS.humidityDanger ? '🔴 DANGER' : '⚠️'}\nGas Level: ${reading.gasLevel.toFixed(1)} ppm  ${reading.gasLevel >= THRESHOLDS.gasDanger ? '🔴 DANGER' : '⚠️'}\nRisk Score: ${reading.riskScore}/100\n\n⚠️ IMMEDIATE ACTION REQUIRED!`
       );
       appState.lastDangerEmailAt = now;
-    } catch (error) {
-      console.error('❌ Danger email failed:', error.message);
-      addAlertRecord({ type: 'email', level: 'danger', status: 'failed', message: error.message, reading });
+    } catch (err) {
+      console.error('❌ Danger email failed:', err.message);
+      addAlertRecord({ type: 'email', level: 'danger', status: 'failed', message: err.message, reading });
     }
   }
 }
