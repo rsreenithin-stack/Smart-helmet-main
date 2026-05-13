@@ -99,6 +99,14 @@ async function refreshData() {
             const response = await fetch(`${API_BASE_URL}/dashboard/current`);
             if (!response.ok) throw new Error(`Backend API Error: ${response.status}`);
             const payload = await response.json();
+
+            // If device is offline, show disconnected — no stale data alerts
+            if (!payload.deviceOnline) {
+                updateConnectionStatus(false, 'Device Offline');
+                document.getElementById('lastUpdate').textContent = payload.lastError || 'Device offline';
+                return;
+            }
+
             const r = payload.reading;
             data = {
                 temperature:   r.temperature,

@@ -301,17 +301,17 @@ function updateSystemHealth() {
     }
 }
 
-function updateConnectionStatus(isConnected) {
+function updateConnectionStatus(isConnected, label) {
     const statusDot = document.getElementById('connectionStatus');
     const statusText = document.getElementById('statusText');
     
     if (isConnected) {
         statusDot.className = 'status-dot connected';
-        statusText.textContent = 'Connected';
+        statusText.textContent = label || 'Connected';
         statusText.style.color = '#00ff88';
     } else {
         statusDot.className = 'status-dot disconnected';
-        statusText.textContent = 'Disconnected';
+        statusText.textContent = label || 'Disconnected';
         statusText.style.color = '#ff3b4f';
     }
 }

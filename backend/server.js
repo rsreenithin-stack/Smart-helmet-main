@@ -30,7 +30,13 @@ const POLL_INTERVAL  = 5 * 1000;
 const CACHE_TTL      = 4 * 1000;
 const MAX_ALERTS     = 200;
 
-// Only create transporter if credentials look real (not placeholders)
+// How old ThingSpeak data can be before we consider the device offline (2 minutes)
+const DEVICE_OFFLINE_MS = 2 * 60 * 1000;
+
+function isDeviceOnline(timestamp) {
+  const age = Date.now() - new Date(timestamp).getTime();
+  return age <= DEVICE_OFFLINE_MS;
+}
 const emailUser = process.env.EMAIL_USER || '';
 const emailPass = process.env.EMAIL_PASSWORD || '';
 const emailReady = emailUser.includes('@') && emailPass.length > 0
@@ -290,6 +296,26 @@ async function refreshLatestReading(force = false) {
     const feed = await fetchLatestFeed();
     const reading = mapFeed(feed);
 
+    // Check if device is actually online (data must be fresh)
+    const deviceOnline = isDeviceOnline(reading.timestamp);
+
+    if (!deviceOnline) {
+      // Device is offline — stale data, do NOT trigger alerts
+      appState.pollFailures += 1;
+      appState.lastError = `Device offline — last data: ${new Date(reading.timestamp).toLocaleTimeString()} (${Math.round((Date.now() - new Date(reading.timestamp).getTime()) / 60000)}min ago)`;
+      appState.isFallbackData = true;
+
+      // Reset previousStatus so when device comes back online it sends a fresh alert
+      appState.previousStatus = null;
+
+      if (!appState.currentReading) {
+        appState.currentReading = reading;
+        appState.lastFetchedAt = now;
+      }
+      console.log(`📴 Device offline: ${appState.lastError}`);
+      return appState.currentReading;
+    }
+
     appState.currentReading = reading;
     appState.currentStatus = reading.overallStatus;
     appState.lastFetchedAt = now;
@@ -456,10 +482,12 @@ app.get('/api/config', (req, res) => {
 app.get('/api/dashboard/current', async (req, res) => {
   try {
     const reading = await refreshLatestReading(Boolean(req.query.force));
+    const deviceOnline = reading ? isDeviceOnline(reading.timestamp) : false;
     res.json({
       reading,
       thresholds: THRESHOLDS,
-      status: reading.overallStatus,
+      status: deviceOnline ? reading.overallStatus : 'offline',
+      deviceOnline,
       updatedAt: new Date(appState.lastFetchedAt).toISOString(),
       lastError: appState.lastError,
       pollFailures: appState.pollFailures,
